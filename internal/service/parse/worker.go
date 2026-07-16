@@ -19,9 +19,11 @@ import (
 	"github.com/Mininglamp-OSS/octo-marketplace/internal/storage"
 )
 
-const (
-	parseTimeout   = 30 * time.Second
-	workerPoolSize = 5
+const workerPoolSize = 5
+
+var (
+	parseTimeout        = 30 * time.Second
+	statusUpdateTimeout = 5 * time.Second
 )
 
 // Worker manages the async parsing goroutine pool.
@@ -51,7 +53,7 @@ func (w *Worker) Submit(taskID, objectKey string, maxZipBytes int64) {
 		defer func() {
 			if r := recover(); r != nil {
 				log.Printf("[parse-worker] panic recovered for task %s: %v", taskID, r)
-				_ = w.repo.UpdateFailed(context.Background(), taskID, "INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+				w.updateFailed(taskID, "INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
 			}
 		}()
 
@@ -74,28 +76,28 @@ func (w *Worker) process(taskID, objectKey string, maxZipBytes int64) {
 	// 1. Download zip from storage to a temp file
 	tmpDir, err := os.MkdirTemp("", "parse-*")
 	if err != nil {
-		_ = w.repo.UpdateFailed(ctx, taskID, "INTERNAL_ERROR", "cannot create temp dir")
+		w.updateFailed(taskID, "INTERNAL_ERROR", "cannot create temp dir")
 		return
 	}
 	defer os.RemoveAll(tmpDir)
 
 	zipPath := filepath.Join(tmpDir, "skill.zip")
 	if err := w.downloadToFile(ctx, objectKey, zipPath, maxZipBytes); err != nil {
-		_ = w.repo.UpdateFailed(ctx, taskID, "INTERNAL_ERROR", "download failed: "+err.Error())
+		w.updateFailed(taskID, "INTERNAL_ERROR", "download failed: "+err.Error())
 		return
 	}
 
 	// 2. Compute SHA256
 	sha, err := fileSHA256(zipPath)
 	if err != nil {
-		_ = w.repo.UpdateFailed(ctx, taskID, "INTERNAL_ERROR", "sha256 failed")
+		w.updateFailed(taskID, "INTERNAL_ERROR", "sha256 failed")
 		return
 	}
 
 	// 3. Extract zip and find SKILL.md
 	result, errCode, errMsg := ExtractZip(zipPath, maxZipBytes)
 	if errCode != "" {
-		_ = w.repo.UpdateFailed(ctx, taskID, errCode, errMsg)
+		w.updateFailed(taskID, errCode, errMsg)
 		return
 	}
 
@@ -104,23 +106,23 @@ func (w *Worker) process(taskID, objectKey string, maxZipBytes int64) {
 
 	// 4.1 Validate name (required, hyphen-case, max 64)
 	if errMsg := validateSkillName(fm.Name); errMsg != "" {
-		_ = w.repo.UpdateFailed(ctx, taskID, "INVALID_SKILL_MD", errMsg)
+		w.updateFailed(taskID, "INVALID_SKILL_MD", errMsg)
 		return
 	}
 	// 4.2 Validate description (required, max 1024, no < >)
 	if errMsg := validateSkillDescription(fm.Description); errMsg != "" {
-		_ = w.repo.UpdateFailed(ctx, taskID, "INVALID_SKILL_MD", errMsg)
+		w.updateFailed(taskID, "INVALID_SKILL_MD", errMsg)
 		return
 	}
 
 	// 4.3 Check name uniqueness (same space, same owner, not deleted)
 	task, err := w.repo.GetByID(ctx, taskID)
 	if err != nil {
-		_ = w.repo.UpdateFailed(ctx, taskID, "INTERNAL_ERROR", "cannot fetch parse task")
+		w.updateFailed(taskID, "INTERNAL_ERROR", "cannot fetch parse task")
 		return
 	}
 	if dupErr := w.checkNameDuplicate(ctx, fm.Name, task.SpaceID, task.OwnerID, task.SkillID); dupErr != "" {
-		_ = w.repo.UpdateFailed(ctx, taskID, "DUPLICATE_NAME", dupErr)
+		w.updateFailed(taskID, "DUPLICATE_NAME", dupErr)
 		return
 	}
 
@@ -153,7 +155,7 @@ func (w *Worker) process(taskID, objectKey string, maxZipBytes int64) {
 	}
 
 	// 6. Update task as success
-	_ = w.repo.UpdateSuccess(ctx, taskID, name, descPtr, version, tags, readmePtr, sha)
+	w.updateSuccess(taskID, name, descPtr, version, tags, readmePtr, sha)
 }
 
 func (w *Worker) downloadToFile(ctx context.Context, key, dst string, maxBytes int64) error {
@@ -191,6 +193,18 @@ func fileSHA256(path string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func (w *Worker) updateFailed(taskID, errorCode, errorMessage string) {
+	ctx, cancel := context.WithTimeout(context.Background(), statusUpdateTimeout)
+	defer cancel()
+	_ = w.repo.UpdateFailed(ctx, taskID, errorCode, errorMessage)
+}
+
+func (w *Worker) updateSuccess(taskID string, name string, description *string, version string, tags json.RawMessage, readme *string, sha256 string) {
+	ctx, cancel := context.WithTimeout(context.Background(), statusUpdateTimeout)
+	defer cancel()
+	_ = w.repo.UpdateSuccess(ctx, taskID, name, description, version, tags, readme, sha256)
 }
 
 func sanitizeString(s string, maxLen int) string {
