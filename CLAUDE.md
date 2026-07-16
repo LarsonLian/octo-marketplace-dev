@@ -92,7 +92,12 @@ Never execute Skill code or launch MCP servers inside Marketplace.
 
 ## Errors and API Contracts
 
-- Use a stable structured error envelope with `err.marketplace.*` codes.
+- Follow `tools/octo-api/SKILL.md` for Skill and MCP endpoint work and run
+  `make openapi-check` before committing API changes.
+- Use `{ "data": ... }` for success and
+  `{ "error": { "code", "message", "details", "hint" } }` for failures.
+- Use only the fixed OCTO error-code enum in
+  `tools/octo-api/references/api-spec.md`; do not add service-specific wire codes.
 - Do not return raw internal errors to clients.
 - Log internal causes and sanitize authentication responses against enumeration.
 - Version public API contracts deliberately once web and CLI clients consume

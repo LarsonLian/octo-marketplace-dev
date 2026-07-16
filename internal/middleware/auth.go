@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	apiresponse "github.com/Mininglamp-OSS/octo-marketplace/internal/api/response"
 	"github.com/Mininglamp-OSS/octo-marketplace/internal/auth"
 	"github.com/Mininglamp-OSS/octo-marketplace/internal/model"
 	"github.com/gin-gonic/gin"
@@ -64,7 +65,7 @@ func (a *Authenticator) Handler() gin.HandlerFunc {
 
 		token := requestToken(c)
 		if token == "" {
-			abortError(c, http.StatusUnauthorized, "err.marketplace.authentication_required", "Authentication is required.")
+			abortError(c, http.StatusUnauthorized, "AUTH_REQUIRED", "Authentication is required.")
 			return
 		}
 		if strings.HasPrefix(token, "bf_") {
@@ -72,30 +73,30 @@ func (a *Authenticator) Handler() gin.HandlerFunc {
 			return
 		}
 		if a.resolver == nil {
-			abortError(c, http.StatusServiceUnavailable, "err.marketplace.auth_unavailable", "Authentication service is unavailable.")
+			abortError(c, http.StatusServiceUnavailable, "UPSTREAM_UNAVAILABLE", "Authentication service is unavailable.")
 			return
 		}
 		identity, err := a.resolver.Resolve(c.Request.Context(), token)
 		if err != nil {
-			abortError(c, http.StatusServiceUnavailable, "err.marketplace.auth_unavailable", "Authentication service is unavailable.")
+			abortError(c, http.StatusServiceUnavailable, "UPSTREAM_UNAVAILABLE", "Authentication service is unavailable.")
 			return
 		}
 		if identity.UID == "" {
-			abortError(c, http.StatusUnauthorized, "err.marketplace.invalid_token", "Invalid or expired token.")
+			abortError(c, http.StatusUnauthorized, "AUTH_REQUIRED", "Invalid or expired token.")
 			return
 		}
 		if !identity.ContextIncluded {
-			abortError(c, http.StatusServiceUnavailable, "err.marketplace.auth_context_unavailable", "Authorization context is unavailable.")
+			abortError(c, http.StatusServiceUnavailable, "UPSTREAM_UNAVAILABLE", "Authorization context is unavailable.")
 			return
 		}
 
 		spaceID := strings.TrimSpace(c.GetHeader("X-Space-Id"))
 		if spaceID == "" {
-			abortError(c, http.StatusBadRequest, "err.marketplace.space_required", "X-Space-Id header is required.")
+			abortError(c, http.StatusBadRequest, "VALIDATION_ERROR", "X-Space-Id header is required.")
 			return
 		}
 		if !contains(identity.Spaces, spaceID) {
-			abortError(c, http.StatusForbidden, "err.marketplace.space_forbidden", "Access to this Space is forbidden.")
+			abortError(c, http.StatusForbidden, "FORBIDDEN", "Access to this Space is forbidden.")
 			return
 		}
 
@@ -150,16 +151,16 @@ func (a *Authenticator) WrapMarket(next http.Handler) http.Handler {
 
 func (a *Authenticator) authenticateBot(c *gin.Context, token string) {
 	if a.botResolver == nil {
-		abortError(c, http.StatusServiceUnavailable, "err.marketplace.auth_unavailable", "Authentication service is unavailable.")
+		abortError(c, http.StatusServiceUnavailable, "UPSTREAM_UNAVAILABLE", "Authentication service is unavailable.")
 		return
 	}
 	bot, err := a.botResolver.ResolveBot(c.Request.Context(), token)
 	if err != nil {
-		abortError(c, http.StatusServiceUnavailable, "err.marketplace.auth_unavailable", "Authentication service is unavailable.")
+		abortError(c, http.StatusServiceUnavailable, "UPSTREAM_UNAVAILABLE", "Authentication service is unavailable.")
 		return
 	}
 	if bot.BotUID == "" || bot.OwnerUID == "" || bot.SpaceID == "" {
-		abortError(c, http.StatusUnauthorized, "err.marketplace.invalid_bot_token", "Invalid or expired Bot token.")
+		abortError(c, http.StatusUnauthorized, "AUTH_REQUIRED", "Invalid or expired Bot token.")
 		return
 	}
 	identity := model.Identity{
@@ -258,13 +259,7 @@ func contains(values []string, target string) bool {
 }
 
 func abortError(c *gin.Context, status int, code, message string) {
-	c.AbortWithStatusJSON(status, gin.H{
-		"error": gin.H{
-			"code":        code,
-			"message":     message,
-			"http_status": status,
-		},
-	})
+	apiresponse.Fail(c, status, code, message, nil, "")
 }
 
 // writeMarketError renders the marketplace wire envelope (doc §2):
@@ -273,9 +268,10 @@ func writeMarketError(w http.ResponseWriter, status int, code, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"err": map[string]any{
+		"error": map[string]any{
 			"code":    code,
 			"message": message,
+			"details": map[string]any{},
 		},
 	})
 }

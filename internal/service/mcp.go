@@ -182,8 +182,8 @@ func (s *Service) ListMine(ctx context.Context, caller Caller, p ListParams) (mo
 // client should store + render. Mirrors the frontend-agreed { url } contract
 // (LSC-80 #1).
 type IconResult struct {
-	URL     string
-	Version int
+	URL     string `json:"icon_url"`
+	Version int    `json:"version"`
 }
 
 // UploadIcon stores a new icon for an owned MCP in object storage and points

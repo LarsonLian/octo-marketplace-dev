@@ -164,8 +164,8 @@ func TestAdminDeleteCategoryEmpty(t *testing.T) {
 
 	w := doRequest(engine, "DELETE", "/api/v1/skill/admin/categories/cat-1", nil)
 
-	if w.Code != http.StatusNoContent {
-		t.Fatalf("status=%d want=%d body=%s", w.Code, http.StatusNoContent, w.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d want=%d body=%s", w.Code, http.StatusOK, w.Body.String())
 	}
 }
 
@@ -182,8 +182,9 @@ func TestAdminDeleteCategoryInUse(t *testing.T) {
 		t.Fatalf("status=%d want=%d body=%s", w.Code, http.StatusConflict, w.Body.String())
 	}
 	body := parseBody(t, w)
-	if body["code"] != errcode.CategoryInUse {
-		t.Errorf("code=%v want=%v", body["code"], errcode.CategoryInUse)
+	errorBody := body["error"].(map[string]interface{})
+	if errorBody["code"] != errcode.CategoryInUse {
+		t.Errorf("code=%v want=%v", errorBody["code"], errcode.CategoryInUse)
 	}
 }
 
@@ -293,8 +294,9 @@ func TestGetSkillNotFound(t *testing.T) {
 		t.Fatalf("status=%d want=%d body=%s", w.Code, http.StatusNotFound, w.Body.String())
 	}
 	body := parseBody(t, w)
-	if body["code"] != errcode.NotFound {
-		t.Errorf("code=%v want=%v", body["code"], errcode.NotFound)
+	errorBody := body["error"].(map[string]interface{})
+	if errorBody["code"] != errcode.NotFound {
+		t.Errorf("code=%v want=%v", errorBody["code"], errcode.NotFound)
 	}
 }
 
@@ -332,8 +334,8 @@ func TestDeleteSkillOwner(t *testing.T) {
 
 	w := doRequest(engine, "DELETE", "/api/v1/skill/skill-6", nil)
 
-	if w.Code != http.StatusNoContent {
-		t.Fatalf("status=%d want=%d body=%s", w.Code, http.StatusNoContent, w.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d want=%d body=%s", w.Code, http.StatusOK, w.Body.String())
 	}
 }
 
@@ -405,8 +407,7 @@ func TestListSkills(t *testing.T) {
 		t.Fatalf("status=%d want=%d body=%s", w.Code, http.StatusOK, w.Body.String())
 	}
 	body := parseBody(t, w)
-	data := body["data"].(map[string]interface{})
-	items := data["items"].([]interface{})
+	items := body["data"].([]interface{})
 	if len(items) != 2 {
 		t.Errorf("expected 2 items, got %d", len(items))
 	}
@@ -469,8 +470,9 @@ func TestInitUploadFileTooLarge(t *testing.T) {
 		t.Fatalf("status=%d want=%d body=%s", w.Code, http.StatusRequestEntityTooLarge, w.Body.String())
 	}
 	body := parseBody(t, w)
-	if body["code"] != errcode.FileTooLarge {
-		t.Errorf("code=%v want=%v", body["code"], errcode.FileTooLarge)
+	errorBody := body["error"].(map[string]interface{})
+	if errorBody["code"] != errcode.FileTooLarge {
+		t.Errorf("code=%v want=%v", errorBody["code"], errcode.FileTooLarge)
 	}
 }
 
@@ -505,8 +507,8 @@ func TestInitUploadHappyPath(t *testing.T) {
 	}
 	body := parseBody(t, w)
 	data := body["data"].(map[string]interface{})
-	if data["upload_id"] == nil || data["upload_id"] == "" {
-		t.Error("expected upload_id in response")
+	if data["skill_upload_id"] == nil || data["skill_upload_id"] == "" {
+		t.Error("expected skill_upload_id in response")
 	}
 }
 
@@ -619,7 +621,7 @@ func TestDownloadSkillJSON(t *testing.T) {
 	}
 	body := parseBody(t, w)
 	data, ok := body["data"].(map[string]interface{})
-	if !ok || data["url"] == "" {
+	if !ok || data["download_url"] == "" {
 		t.Fatalf("missing download URL: %v", body)
 	}
 }
@@ -639,8 +641,12 @@ func TestErrorFormatConsistency(t *testing.T) {
 		t.Fatalf("status=%d want=%d body=%s", w.Code, http.StatusNotFound, w.Body.String())
 	}
 	body := parseBody(t, w)
-	code, hasCode := body["code"]
-	msg, hasMsg := body["message"]
+	errorBody, ok := body["error"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("error response missing error envelope: %v", body)
+	}
+	code, hasCode := errorBody["code"]
+	msg, hasMsg := errorBody["message"]
 	if !hasCode || !hasMsg {
 		t.Fatalf("error response missing code or message: %v", body)
 	}
@@ -707,8 +713,9 @@ func TestAdminCreateCategoryNonAdminForbidden(t *testing.T) {
 		t.Fatalf("status=%d want=%d body=%s", w.Code, http.StatusForbidden, w.Body.String())
 	}
 	body := parseBody(t, w)
-	if body["code"] != errcode.PermissionDenied {
-		t.Errorf("code=%v want=%v", body["code"], errcode.PermissionDenied)
+	errorBody := body["error"].(map[string]interface{})
+	if errorBody["code"] != errcode.PermissionDenied {
+		t.Errorf("code=%v want=%v", errorBody["code"], errcode.PermissionDenied)
 	}
 }
 

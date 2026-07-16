@@ -140,18 +140,17 @@ func registerMCP(r *gin.Engine, authenticator *marketmiddleware.Authenticator, m
 	if mcp == nil {
 		return
 	}
-	mux := http.NewServeMux()
-	mux.Handle("POST /api/v1/mcps", authenticator.WrapMarket(http.HandlerFunc(mcp.Create)))
-	mux.Handle("GET /api/v1/mcps", authenticator.WrapMarket(http.HandlerFunc(mcp.List)))
-	mux.Handle("GET /api/v1/mcps/mine", authenticator.WrapMarket(http.HandlerFunc(mcp.ListMine)))
-	mux.Handle("POST /api/v1/mcps/probe", authenticator.WrapMarket(http.HandlerFunc(mcp.Probe)))
-	mux.Handle("GET /api/v1/mcps/{id}", authenticator.WrapMarket(http.HandlerFunc(mcp.Get)))
-	mux.Handle("PATCH /api/v1/mcps/{id}", authenticator.WrapMarket(http.HandlerFunc(mcp.Patch)))
-	mux.Handle("DELETE /api/v1/mcps/{id}", authenticator.WrapMarket(http.HandlerFunc(mcp.Delete)))
-	mux.Handle("POST /api/v1/mcps/{id}/icon", authenticator.WrapMarket(http.HandlerFunc(mcp.UploadIcon)))
-
-	r.Any("/api/v1/mcps", gin.WrapH(mux))
-	r.Any("/api/v1/mcps/*any", gin.WrapH(mux))
+	rg := r.Group("/api/v1/mcps", authenticator.Handler())
+	rg.POST("", mcp.Create)
+	rg.GET("", mcp.List)
+	rg.GET("/mine", mcp.ListMine)
+	rg.POST("/_probe", mcp.Probe)
+	rg.POST("/probe", deprecatedRoute("/api/v1/mcps/_probe"), mcp.Probe)
+	rg.GET("/:mcp_id", mcp.Get)
+	rg.PATCH("/:mcp_id", mcp.Patch)
+	rg.DELETE("/:mcp_id", mcp.Delete)
+	rg.POST("/:mcp_id/icon", mcp.UploadIcon)
+	r.Group("/api/v1", authenticator.Handler()).GET("/mcp_categories", mcp.ListCategories)
 }
 
 // registerAdminMCP mounts the admin surface for system MCPs at /api/v1/admin/mcps.
@@ -159,16 +158,23 @@ func registerAdminMCP(r *gin.Engine, adminAuth *marketmiddleware.AdminAuthentica
 	if admin == nil {
 		return
 	}
-	mux := http.NewServeMux()
-	mux.Handle("POST /api/v1/admin/mcps", adminAuth.Wrap(http.HandlerFunc(admin.Create)))
-	mux.Handle("POST /api/v1/admin/mcps/probe", adminAuth.Wrap(http.HandlerFunc(admin.Probe)))
-	mux.Handle("GET /api/v1/admin/mcps", adminAuth.Wrap(http.HandlerFunc(admin.List)))
-	mux.Handle("GET /api/v1/admin/mcps/{id}", adminAuth.Wrap(http.HandlerFunc(admin.Get)))
-	mux.Handle("PATCH /api/v1/admin/mcps/{id}", adminAuth.Wrap(http.HandlerFunc(admin.Patch)))
-	mux.Handle("DELETE /api/v1/admin/mcps/{id}", adminAuth.Wrap(http.HandlerFunc(admin.Delete)))
+	rg := r.Group("/api/v1/admin/mcps", adminAuth.Handler())
+	rg.POST("", admin.Create)
+	rg.POST("/_probe", admin.Probe)
+	rg.POST("/probe", deprecatedRoute("/api/v1/admin/mcps/_probe"), admin.Probe)
+	rg.GET("", admin.List)
+	rg.GET("/:mcp_id", admin.Get)
+	rg.PATCH("/:mcp_id", admin.Patch)
+	rg.DELETE("/:mcp_id", admin.Delete)
+}
 
-	r.Any("/api/v1/admin/mcps", gin.WrapH(mux))
-	r.Any("/api/v1/admin/mcps/*any", gin.WrapH(mux))
+func deprecatedRoute(successor string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header("Deprecation", "true")
+		c.Header("Sunset", "Thu, 01 Oct 2026 00:00:00 GMT")
+		c.Header("Link", "<"+successor+">; rel=\"successor-version\"")
+		c.Next()
+	}
 }
 
 func corsMiddleware() gin.HandlerFunc {

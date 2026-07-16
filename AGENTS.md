@@ -124,13 +124,18 @@ When marketplace behavior is introduced:
 - The server resolves global, Space, user, and agent policy. CLI clients receive
   an effective plan and must not reproduce authorization logic.
 
-## Error Handling
+## API Contracts and Error Handling
 
-Future user-facing failures must use one stable structured error envelope.
+Skill and MCP Marketplace endpoints follow the vendored OCTO OpenAPI standard
+under `tools/octo-api/`. Run `make openapi-check` after changing an endpoint.
 Handlers must not expose raw Go errors, SQL errors, internal URLs, credentials,
 or filesystem paths.
 
-- Use stable machine-readable codes under `err.marketplace.*`.
+- Successful responses use `{ "data": ... }`; list responses add the standard
+  cursor or offset `pagination` object.
+- Failed responses use `{ "error": { "code", "message", "details", "hint" } }`.
+- Error codes are restricted to the fixed enum documented in
+  `tools/octo-api/references/api-spec.md`.
 - Log internal causes server-side and return a generic 5xx response.
 - Authentication failures use a generic response to prevent enumeration.
 - Keep wire contracts backward compatible after clients begin consuming them.

@@ -1,135 +1,200 @@
-// Admin surface for platform-provided (visibility=system) MCP records.
-// Reached via /admin/api/v1/*, guarded by the AdminAuthenticator middleware
-// (internal/middleware/admin.go). Public /market/api/v1/* handlers live in
-// mcp.go; the two share the request/response types (CreateRequest, Detail,
-// ListResponse) and the wire error envelope.
-
 package handler
 
 import (
 	"context"
-	"net/http"
 
+	apiresponse "github.com/Mininglamp-OSS/octo-marketplace/internal/api/response"
 	"github.com/Mininglamp-OSS/octo-marketplace/internal/apierr"
 	"github.com/Mininglamp-OSS/octo-marketplace/internal/model"
 	"github.com/Mininglamp-OSS/octo-marketplace/internal/service"
+	"github.com/gin-gonic/gin"
 )
 
-// AdminMCPService is the subset of the service the admin handlers depend on.
-// Kept as an interface so tests can inject fakes without spinning up a repo.
 type AdminMCPService interface {
-	CreateSystem(ctx context.Context, caller service.Caller, req model.CreateRequest) (model.Detail, *apierr.Error)
-	ListSystem(ctx context.Context, p service.ListParams) (model.ListResponse, *apierr.Error)
-	GetSystem(ctx context.Context, id string) (model.Detail, *apierr.Error)
-	UpdateSystem(ctx context.Context, id string, req model.PatchRequest) (model.Detail, *apierr.Error)
-	DeleteSystem(ctx context.Context, id string) *apierr.Error
-	Probe(ctx context.Context, req service.ProbeRequest) (service.ProbeResponse, *apierr.Error)
+	CreateSystem(context.Context, service.Caller, model.CreateRequest) (model.Detail, *apierr.Error)
+	ListSystem(context.Context, service.ListParams) (model.ListResponse, *apierr.Error)
+	GetSystem(context.Context, string) (model.Detail, *apierr.Error)
+	UpdateSystem(context.Context, string, model.PatchRequest) (model.Detail, *apierr.Error)
+	DeleteSystem(context.Context, string) *apierr.Error
+	Probe(context.Context, service.ProbeRequest) (service.ProbeResponse, *apierr.Error)
 }
 
-// AdminMCP wires the admin subset of the MCP service to HTTP.
-type AdminMCP struct {
-	svc AdminMCPService
-}
+type AdminMCP struct{ svc AdminMCPService }
 
-// NewAdminMCP returns an admin handler.
-func NewAdminMCP(svc AdminMCPService) *AdminMCP {
-	return &AdminMCP{svc: svc}
-}
+func NewAdminMCP(svc AdminMCPService) *AdminMCP { return &AdminMCP{svc: svc} }
 
-// Create handles POST /admin/api/v1/mcps.
-//
-// The body is a normal CreateRequest (same shape as the public endpoint) but
-// any `visibility` field is ignored — the service always stamps
-// visibility=system on this path. The caller (an admin identity from the
-// middleware) becomes owner_uid and creator_name; space_id is NULL.
-func (h *AdminMCP) Create(w http.ResponseWriter, r *http.Request) {
-	caller, ok := callerFromContext(r)
+// Create godoc
+// @Summary Create system MCP server
+// @Description Create a system-visible MCP server through the administrator surface.
+// @Tags admin_mcp
+// @ID admin_mcp.create
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param body body model.CreateRequest true "System MCP server"
+// @Success 201 {object} apiresponse.Data[model.Detail]
+// @Failure 400 {object} apiresponse.Error "VALIDATION_ERROR"
+// @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
+// @Failure 404 {object} apiresponse.Error "NOT_FOUND"
+// @Failure 409 {object} apiresponse.Error "DUPLICATE"
+// @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
+// @Router /admin/mcps [post]
+func (h *AdminMCP) Create(c *gin.Context) {
+	caller, ok := callerFromContext(c)
 	if !ok {
-		writeError(w, apierr.Unauthorized())
+		writeError(c, apierr.Unauthorized())
 		return
 	}
 	var req model.CreateRequest
-	if err := decodeJSON(w, r, &req); err != nil {
-		writeError(w, err)
+	if err := decodeJSON(c, &req); err != nil {
+		writeError(c, err)
 		return
 	}
-	detail, apiErr := h.svc.CreateSystem(r.Context(), caller, req)
+	detail, apiErr := h.svc.CreateSystem(c.Request.Context(), caller, req)
 	if apiErr != nil {
-		writeError(w, apiErr)
+		writeError(c, apiErr)
 		return
 	}
-	writeJSON(w, http.StatusCreated, detail)
+	apiresponse.Created(c, detail)
 }
 
-// List handles GET /admin/api/v1/mcps. Lists every visibility=system record
-// regardless of Space, paginated the same way the public list is.
-func (h *AdminMCP) List(w http.ResponseWriter, r *http.Request) {
-	resp, apiErr := h.svc.ListSystem(r.Context(), listParams(r))
+// List godoc
+// @Summary List system MCP servers
+// @Description List system-visible MCP servers using offset pagination.
+// @Tags admin_mcp
+// @ID admin_mcp.list
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param keyword query string false "Search keyword"
+// @Param category query string false "Category key"
+// @Param page query int false "Page number, default 1"
+// @Param page_size query int false "Page size, default 20, max 100"
+// @Success 200 {object} apiresponse.OffsetList[model.ListItem]
+// @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
+// @Failure 404 {object} apiresponse.Error "NOT_FOUND"
+// @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
+// @Router /admin/mcps [get]
+func (h *AdminMCP) List(c *gin.Context) {
+	p, page, pageSize := listParams(c)
+	resp, apiErr := h.svc.ListSystem(c.Request.Context(), p)
 	if apiErr != nil {
-		writeError(w, apiErr)
+		writeError(c, apiErr)
 		return
 	}
-	writeJSON(w, http.StatusOK, resp)
+	apiresponse.Offset(c, resp.Items, resp.Total, page, pageSize)
 }
 
-// Get handles GET /admin/api/v1/mcps/{id}. Returns the full detail of a
-// visibility=system record; anything else is 404 (loadSystem enforcement).
-func (h *AdminMCP) Get(w http.ResponseWriter, r *http.Request) {
-	detail, apiErr := h.svc.GetSystem(r.Context(), r.PathValue("id"))
+// Get godoc
+// @Summary Get system MCP server
+// @Description Return one system-visible MCP server for administration.
+// @Tags admin_mcp
+// @ID admin_mcp.get
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param mcp_id path string true "MCP ID"
+// @Success 200 {object} apiresponse.Data[model.Detail]
+// @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
+// @Failure 404 {object} apiresponse.Error "NOT_FOUND"
+// @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
+// @Router /admin/mcps/{mcp_id} [get]
+func (h *AdminMCP) Get(c *gin.Context) {
+	detail, apiErr := h.svc.GetSystem(c.Request.Context(), c.Param("mcp_id"))
 	if apiErr != nil {
-		writeError(w, apiErr)
+		writeError(c, apiErr)
 		return
 	}
-	writeJSON(w, http.StatusOK, detail)
+	apiresponse.OK(c, detail)
 }
 
-// Patch handles PATCH /admin/api/v1/mcps/{id}. Same partial-update shape as
-// the public PATCH (doc §4.5) but skips ownership — any admin can edit any
-// system MCP. Visibility is pinned to system by the service (see
-// service.UpdateSystem); a body that tries to demote to public/private is
-// rejected 400.
-func (h *AdminMCP) Patch(w http.ResponseWriter, r *http.Request) {
+// Patch godoc
+// @Summary Update system MCP server
+// @Description Partially update one system-visible MCP server.
+// @Tags admin_mcp
+// @ID admin_mcp.update
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param mcp_id path string true "MCP ID"
+// @Param body body model.PatchRequest true "MCP changes"
+// @Success 200 {object} apiresponse.Data[model.Detail]
+// @Failure 400 {object} apiresponse.Error "VALIDATION_ERROR"
+// @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
+// @Failure 404 {object} apiresponse.Error "NOT_FOUND"
+// @Failure 409 {object} apiresponse.Error "DUPLICATE"
+// @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
+// @Router /admin/mcps/{mcp_id} [patch]
+func (h *AdminMCP) Patch(c *gin.Context) {
 	var req model.PatchRequest
-	if err := decodeJSON(w, r, &req); err != nil {
-		writeError(w, err)
+	if err := decodeJSON(c, &req); err != nil {
+		writeError(c, err)
 		return
 	}
-	detail, apiErr := h.svc.UpdateSystem(r.Context(), r.PathValue("id"), req)
+	detail, apiErr := h.svc.UpdateSystem(c.Request.Context(), c.Param("mcp_id"), req)
 	if apiErr != nil {
-		writeError(w, apiErr)
+		writeError(c, apiErr)
 		return
 	}
-	writeJSON(w, http.StatusOK, detail)
+	apiresponse.OK(c, detail)
 }
 
-// Delete handles DELETE /admin/api/v1/mcps/{id}. Soft delete; response is
-// 204 to match the public DELETE semantics (doc §4.6).
-func (h *AdminMCP) Delete(w http.ResponseWriter, r *http.Request) {
-	if apiErr := h.svc.DeleteSystem(r.Context(), r.PathValue("id")); apiErr != nil {
-		writeError(w, apiErr)
+// Delete godoc
+// @Summary Delete system MCP server
+// @Description Soft-delete a system-visible MCP server.
+// @Tags admin_mcp
+// @ID admin_mcp.delete
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param mcp_id path string true "MCP ID"
+// @Success 200 {object} apiresponse.Data[apiresponse.EmptyResp]
+// @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
+// @Failure 404 {object} apiresponse.Error "NOT_FOUND"
+// @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
+// @Router /admin/mcps/{mcp_id} [delete]
+func (h *AdminMCP) Delete(c *gin.Context) {
+	if apiErr := h.svc.DeleteSystem(c.Request.Context(), c.Param("mcp_id")); apiErr != nil {
+		writeError(c, apiErr)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	apiresponse.Empty(c)
 }
 
-// Probe handles POST /admin/api/v1/mcps/probe — the admin-scoped mirror of
-// the public /mcps/probe endpoint (see mcp.go). Reuses the same service
-// method; the only difference is the auth path (AdminAuthenticator vs the
-// user Authenticator). No caller-identity requirement here: the admin token
-// already gates access, and probe never persists anything caller-scoped.
-func (h *AdminMCP) Probe(w http.ResponseWriter, r *http.Request) {
+// Probe godoc
+// @Summary Probe system MCP server
+// @Description Probe a remote MCP connection through the administrator surface without persisting it.
+// @Tags admin_mcp
+// @ID admin_mcp.probe
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param body body service.ProbeRequest true "Connection to probe"
+// @Success 200 {object} apiresponse.Data[service.ProbeResponse]
+// @Failure 400 {object} apiresponse.Error "VALIDATION_ERROR"
+// @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
+// @Failure 404 {object} apiresponse.Error "NOT_FOUND"
+// @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
+// @Router /admin/mcps/_probe [post]
+func (h *AdminMCP) Probe(c *gin.Context) {
 	var req service.ProbeRequest
-	if err := decodeJSON(w, r, &req); err != nil {
-		writeError(w, err)
+	if err := decodeJSON(c, &req); err != nil {
+		writeError(c, err)
 		return
 	}
-	resp, apiErr := h.svc.Probe(r.Context(), req)
+	resp, apiErr := h.svc.Probe(c.Request.Context(), req)
 	if apiErr != nil {
-		writeError(w, apiErr)
+		writeError(c, apiErr)
 		return
 	}
 	if resp.Tools == nil {
 		resp.Tools = []model.Tool{}
 	}
-	writeJSON(w, http.StatusOK, resp)
+	apiresponse.OK(c, resp)
 }

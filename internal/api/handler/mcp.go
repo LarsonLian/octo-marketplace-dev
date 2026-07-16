@@ -1,7 +1,3 @@
-// Package handler renders the MCP catalog HTTP surface. It parses requests and
-// writes responses only; all business rules live in internal/service and all
-// SQL in internal/repository. The router is the sole place that maps URLs to
-// these methods (AGENTS.md), so this file exposes handler methods, not routes.
 package handler
 
 import (
@@ -14,260 +10,369 @@ import (
 	"strconv"
 	"strings"
 
+	apiresponse "github.com/Mininglamp-OSS/octo-marketplace/internal/api/response"
 	"github.com/Mininglamp-OSS/octo-marketplace/internal/apierr"
 	marketmiddleware "github.com/Mininglamp-OSS/octo-marketplace/internal/middleware"
 	"github.com/Mininglamp-OSS/octo-marketplace/internal/model"
 	"github.com/Mininglamp-OSS/octo-marketplace/internal/service"
+	"github.com/gin-gonic/gin"
 )
 
-// maxBodyBytes caps request bodies. Icons may be data URLs (MEDIUMTEXT in the
-// schema), so the limit is generous but bounded to reject decompression-bomb
-// style oversized payloads at the ingestion boundary (AGENTS.md).
-const maxBodyBytes = 8 << 20 // 8 MiB
+const (
+	maxBodyBytes     = 8 << 20
+	maxIconBytes     = 2 << 20
+	bytesReaderSlack = 1 << 20
+)
 
-// MCPService is the subset of the service the handlers depend on.
 type MCPService interface {
-	Create(ctx context.Context, caller service.Caller, req model.CreateRequest) (model.Detail, *apierr.Error)
-	Get(ctx context.Context, caller service.Caller, id string) (model.Detail, *apierr.Error)
-	Patch(ctx context.Context, caller service.Caller, id string, req model.PatchRequest) (model.Detail, *apierr.Error)
-	Delete(ctx context.Context, caller service.Caller, id string) *apierr.Error
-	List(ctx context.Context, caller service.Caller, p service.ListParams) (model.ListResponse, *apierr.Error)
-	ListMine(ctx context.Context, caller service.Caller, p service.ListParams) (model.ListResponse, *apierr.Error)
-	Probe(ctx context.Context, req service.ProbeRequest) (service.ProbeResponse, *apierr.Error)
-	UploadIcon(ctx context.Context, caller service.Caller, id string, data []byte, contentType string) (service.IconResult, *apierr.Error)
+	Create(context.Context, service.Caller, model.CreateRequest) (model.Detail, *apierr.Error)
+	Get(context.Context, service.Caller, string) (model.Detail, *apierr.Error)
+	Patch(context.Context, service.Caller, string, model.PatchRequest) (model.Detail, *apierr.Error)
+	Delete(context.Context, service.Caller, string) *apierr.Error
+	List(context.Context, service.Caller, service.ListParams) (model.ListResponse, *apierr.Error)
+	ListMine(context.Context, service.Caller, service.ListParams) (model.ListResponse, *apierr.Error)
+	Probe(context.Context, service.ProbeRequest) (service.ProbeResponse, *apierr.Error)
+	UploadIcon(context.Context, service.Caller, string, []byte, string) (service.IconResult, *apierr.Error)
 }
 
-// MCP wires the service to HTTP.
-type MCP struct {
-	svc MCPService
-}
+type MCP struct{ svc MCPService }
 
-// NewMCP returns an MCP handler.
-func NewMCP(svc MCPService) *MCP {
-	return &MCP{svc: svc}
-}
+func NewMCP(svc MCPService) *MCP { return &MCP{svc: svc} }
 
-// Create handles POST /mcps.
-func (h *MCP) Create(w http.ResponseWriter, r *http.Request) {
-	caller, ok := callerFromContext(r)
+// Create godoc
+// @Summary Create MCP server
+// @Description Create an MCP server owned by the authenticated user in the current Space.
+// @Tags mcp
+// @ID mcp.create
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param body body model.CreateRequest true "MCP server"
+// @Success 201 {object} apiresponse.Data[model.Detail]
+// @Failure 400 {object} apiresponse.Error "VALIDATION_ERROR"
+// @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
+// @Failure 404 {object} apiresponse.Error "NOT_FOUND"
+// @Failure 409 {object} apiresponse.Error "DUPLICATE"
+// @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
+// @Router /mcps [post]
+func (h *MCP) Create(c *gin.Context) {
+	caller, ok := callerFromContext(c)
 	if !ok {
-		writeError(w, apierr.Unauthorized())
+		writeError(c, apierr.Unauthorized())
 		return
 	}
 	var req model.CreateRequest
-	if err := decodeJSON(w, r, &req); err != nil {
-		writeError(w, err)
+	if err := decodeJSON(c, &req); err != nil {
+		writeError(c, err)
 		return
 	}
-	detail, apiErr := h.svc.Create(r.Context(), caller, req)
+	detail, apiErr := h.svc.Create(c.Request.Context(), caller, req)
 	if apiErr != nil {
-		writeError(w, apiErr)
+		writeError(c, apiErr)
 		return
 	}
-	writeJSON(w, http.StatusCreated, detail)
+	apiresponse.Created(c, detail)
 }
 
-// List handles GET /mcps.
-func (h *MCP) List(w http.ResponseWriter, r *http.Request) {
-	caller, ok := callerFromContext(r)
+// List godoc
+// @Summary List MCP servers
+// @Description List MCP servers visible in the current Space using offset pagination.
+// @Tags mcp
+// @ID mcp.list
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param keyword query string false "Search keyword"
+// @Param category query string false "Category key"
+// @Param page query int false "Page number, default 1"
+// @Param page_size query int false "Page size, default 20, max 100"
+// @Success 200 {object} apiresponse.OffsetList[model.ListItem]
+// @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
+// @Failure 404 {object} apiresponse.Error "NOT_FOUND"
+// @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
+// @Router /mcps [get]
+func (h *MCP) List(c *gin.Context) { h.list(c, false) }
+
+// ListMine godoc
+// @Summary List owned MCP servers
+// @Description List MCP servers owned by the authenticated user in the current Space.
+// @Tags mcp
+// @ID mcp.mine.list
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param keyword query string false "Search keyword"
+// @Param category query string false "Category key"
+// @Param page query int false "Page number, default 1"
+// @Param page_size query int false "Page size, default 20, max 100"
+// @Success 200 {object} apiresponse.OffsetList[model.ListItem]
+// @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
+// @Failure 404 {object} apiresponse.Error "NOT_FOUND"
+// @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
+// @Router /mcps/mine [get]
+func (h *MCP) ListMine(c *gin.Context) { h.list(c, true) }
+
+// ListCategories godoc
+// @Summary List MCP categories
+// @Description Return MCP category keys and visible record counts for the current Space.
+// @Tags mcp
+// @ID mcp_category.list
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Success 200 {object} apiresponse.Data[[]model.CategoryFilter]
+// @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
+// @Failure 404 {object} apiresponse.Error "NOT_FOUND"
+// @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
+// @Router /mcp_categories [get]
+func (h *MCP) ListCategories(c *gin.Context) {
+	caller, ok := callerFromContext(c)
 	if !ok {
-		writeError(w, apierr.Unauthorized())
+		writeError(c, apierr.Unauthorized())
 		return
 	}
-	resp, apiErr := h.svc.List(r.Context(), caller, listParams(r))
+	result, apiErr := h.svc.List(c.Request.Context(), caller, service.ListParams{})
 	if apiErr != nil {
-		writeError(w, apiErr)
+		writeError(c, apiErr)
 		return
 	}
-	writeJSON(w, http.StatusOK, resp)
+	apiresponse.OK(c, result.Categories)
 }
 
-// ListMine handles GET /mcps/mine.
-func (h *MCP) ListMine(w http.ResponseWriter, r *http.Request) {
-	caller, ok := callerFromContext(r)
+func (h *MCP) list(c *gin.Context, mine bool) {
+	caller, ok := callerFromContext(c)
 	if !ok {
-		writeError(w, apierr.Unauthorized())
+		writeError(c, apierr.Unauthorized())
 		return
 	}
-	resp, apiErr := h.svc.ListMine(r.Context(), caller, listParams(r))
+	p, page, pageSize := listParams(c)
+	var resp model.ListResponse
+	var apiErr *apierr.Error
+	if mine {
+		resp, apiErr = h.svc.ListMine(c.Request.Context(), caller, p)
+	} else {
+		resp, apiErr = h.svc.List(c.Request.Context(), caller, p)
+	}
 	if apiErr != nil {
-		writeError(w, apiErr)
+		writeError(c, apiErr)
 		return
 	}
-	writeJSON(w, http.StatusOK, resp)
+	apiresponse.Offset(c, resp.Items, resp.Total, page, pageSize)
 }
 
-// Get handles GET /mcps/{id}.
-func (h *MCP) Get(w http.ResponseWriter, r *http.Request) {
-	caller, ok := callerFromContext(r)
+// Get godoc
+// @Summary Get MCP server
+// @Description Return one MCP server visible to the caller without exposing stored secrets.
+// @Tags mcp
+// @ID mcp.get
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param mcp_id path string true "MCP ID"
+// @Success 200 {object} apiresponse.Data[model.Detail]
+// @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
+// @Failure 404 {object} apiresponse.Error "NOT_FOUND"
+// @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
+// @Router /mcps/{mcp_id} [get]
+func (h *MCP) Get(c *gin.Context) {
+	caller, ok := callerFromContext(c)
 	if !ok {
-		writeError(w, apierr.Unauthorized())
+		writeError(c, apierr.Unauthorized())
 		return
 	}
-	detail, apiErr := h.svc.Get(r.Context(), caller, r.PathValue("id"))
+	detail, apiErr := h.svc.Get(c.Request.Context(), caller, c.Param("mcp_id"))
 	if apiErr != nil {
-		writeError(w, apiErr)
+		writeError(c, apiErr)
 		return
 	}
-	writeJSON(w, http.StatusOK, detail)
+	apiresponse.OK(c, detail)
 }
 
-// Patch handles PATCH /mcps/{id}.
-func (h *MCP) Patch(w http.ResponseWriter, r *http.Request) {
-	caller, ok := callerFromContext(r)
+// Patch godoc
+// @Summary Update MCP server
+// @Description Partially update an MCP server owned by the authenticated user.
+// @Tags mcp
+// @ID mcp.update
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param mcp_id path string true "MCP ID"
+// @Param body body model.PatchRequest true "MCP changes"
+// @Success 200 {object} apiresponse.Data[model.Detail]
+// @Failure 400 {object} apiresponse.Error "VALIDATION_ERROR"
+// @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
+// @Failure 404 {object} apiresponse.Error "NOT_FOUND"
+// @Failure 409 {object} apiresponse.Error "DUPLICATE"
+// @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
+// @Router /mcps/{mcp_id} [patch]
+func (h *MCP) Patch(c *gin.Context) {
+	caller, ok := callerFromContext(c)
 	if !ok {
-		writeError(w, apierr.Unauthorized())
+		writeError(c, apierr.Unauthorized())
 		return
 	}
 	var req model.PatchRequest
-	if err := decodeJSON(w, r, &req); err != nil {
-		writeError(w, err)
+	if err := decodeJSON(c, &req); err != nil {
+		writeError(c, err)
 		return
 	}
-	detail, apiErr := h.svc.Patch(r.Context(), caller, r.PathValue("id"), req)
+	detail, apiErr := h.svc.Patch(c.Request.Context(), caller, c.Param("mcp_id"), req)
 	if apiErr != nil {
-		writeError(w, apiErr)
+		writeError(c, apiErr)
 		return
 	}
-	writeJSON(w, http.StatusOK, detail)
+	apiresponse.OK(c, detail)
 }
 
-// Delete handles DELETE /mcps/{id}.
-func (h *MCP) Delete(w http.ResponseWriter, r *http.Request) {
-	caller, ok := callerFromContext(r)
+// Delete godoc
+// @Summary Delete MCP server
+// @Description Soft-delete an MCP server owned by the caller. Repeated deletion returns not found.
+// @Tags mcp
+// @ID mcp.delete
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param mcp_id path string true "MCP ID"
+// @Success 200 {object} apiresponse.Data[apiresponse.EmptyResp]
+// @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
+// @Failure 404 {object} apiresponse.Error "NOT_FOUND"
+// @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
+// @Router /mcps/{mcp_id} [delete]
+func (h *MCP) Delete(c *gin.Context) {
+	caller, ok := callerFromContext(c)
 	if !ok {
-		writeError(w, apierr.Unauthorized())
+		writeError(c, apierr.Unauthorized())
 		return
 	}
-	if apiErr := h.svc.Delete(r.Context(), caller, r.PathValue("id")); apiErr != nil {
-		writeError(w, apiErr)
+	if apiErr := h.svc.Delete(c.Request.Context(), caller, c.Param("mcp_id")); apiErr != nil {
+		writeError(c, apiErr)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	apiresponse.Empty(c)
 }
 
-// maxIconBytes caps the multipart icon upload before the file is read into
-// memory. The service enforces the same limit on the decoded bytes; this is
-// the ingestion-boundary guard (AGENTS.md) so a huge multipart body is
-// rejected before allocation.
-const maxIconBytes = 2 << 20 // 2 MiB
-
-// UploadIcon handles POST /mcps/{id}/icon — a multipart form with a single
-// `file` part. It stores the image in object storage and returns { url }
-// (the frontend-agreed contract, LSC-80 #1). Owner-only; enforced by the
-// service.
-func (h *MCP) UploadIcon(w http.ResponseWriter, r *http.Request) {
-	caller, ok := callerFromContext(r)
+// UploadIcon godoc
+// @Summary Upload MCP icon
+// @Description Upload and replace the icon for an MCP server owned by the caller.
+// @Tags mcp
+// @ID mcp.icon.upload
+// @Accept multipart/form-data
+// @Produce json
+// @Security Bearer
+// @Param mcp_id path string true "MCP ID"
+// @Param file formData string true "Icon file" format(binary)
+// @Success 200 {object} apiresponse.Data[service.IconResult]
+// @Failure 400 {object} apiresponse.Error "VALIDATION_ERROR"
+// @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
+// @Failure 404 {object} apiresponse.Error "NOT_FOUND"
+// @Failure 413 {object} apiresponse.Error "PAYLOAD_TOO_LARGE"
+// @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
+// @Router /mcps/{mcp_id}/icon [post]
+func (h *MCP) UploadIcon(c *gin.Context) {
+	caller, ok := callerFromContext(c)
 	if !ok {
-		writeError(w, apierr.Unauthorized())
+		writeError(c, apierr.Unauthorized())
 		return
 	}
-	// Bound the whole request body first so an oversized multipart payload is
-	// rejected before we parse it.
-	r.Body = http.MaxBytesReader(w, r.Body, maxIconBytes+bytesReaderSlack)
-	if err := r.ParseMultipartForm(maxIconBytes); err != nil {
-		writeError(w, apierr.InvalidRequest("invalid multipart form or file too large"))
-		return
-	}
-	file, header, err := r.FormFile("file")
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxIconBytes+bytesReaderSlack)
+	file, header, err := c.Request.FormFile("file")
 	if err != nil {
-		writeError(w, apierr.InvalidRequest("missing file part",
-			apierr.Detail{Field: "file", Reason: "required"}))
+		writeError(c, apierr.InvalidRequest("missing or invalid icon file", apierr.Detail{Field: "file", Reason: "required"}))
 		return
 	}
 	defer file.Close()
-
 	data, err := io.ReadAll(io.LimitReader(file, maxIconBytes+1))
 	if err != nil {
-		writeError(w, apierr.InvalidRequest("could not read uploaded file"))
+		writeError(c, apierr.InvalidRequest("could not read uploaded file"))
 		return
 	}
-
-	contentType := ""
-	if header != nil {
-		contentType = header.Header.Get("Content-Type")
-	}
-
-	result, apiErr := h.svc.UploadIcon(r.Context(), caller, r.PathValue("id"), data, contentType)
+	contentType := header.Header.Get("Content-Type")
+	result, apiErr := h.svc.UploadIcon(c.Request.Context(), caller, c.Param("mcp_id"), data, contentType)
 	if apiErr != nil {
-		writeError(w, apiErr)
+		writeError(c, apiErr)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"url": result.URL, "version": result.Version})
+	apiresponse.OK(c, result)
 }
 
-// bytesReaderSlack leaves room for the multipart envelope (boundaries,
-// headers) on top of the raw file cap so a legitimate max-size file is not
-// rejected by the body limit.
-const bytesReaderSlack = 1 << 20 // 1 MiB
-
-// Probe handles POST /mcps/probe — runs an MCP initialize + tools/list
-// the tool list (docs/api/mcp-v1.md §4.7). Auth is required to keep the
-// endpoint from acting as an open HTTP proxy; the caller's identity is not
-// otherwise used, so an in-body probe failure still returns HTTP 200 with
-// {ok:false, error:{code,message}}.
-func (h *MCP) Probe(w http.ResponseWriter, r *http.Request) {
-	if _, ok := callerFromContext(r); !ok {
-		writeError(w, apierr.Unauthorized())
+// Probe godoc
+// @Summary Probe MCP server
+// @Description Probe a remote MCP server connection without persisting the supplied configuration.
+// @Tags mcp
+// @ID mcp.probe
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param body body service.ProbeRequest true "Connection to probe"
+// @Success 200 {object} apiresponse.Data[service.ProbeResponse]
+// @Failure 400 {object} apiresponse.Error "VALIDATION_ERROR"
+// @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
+// @Failure 404 {object} apiresponse.Error "NOT_FOUND"
+// @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
+// @Router /mcps/_probe [post]
+func (h *MCP) Probe(c *gin.Context) {
+	if _, ok := callerFromContext(c); !ok {
+		writeError(c, apierr.Unauthorized())
 		return
 	}
 	var req service.ProbeRequest
-	if err := decodeJSON(w, r, &req); err != nil {
-		writeError(w, err)
+	if err := decodeJSON(c, &req); err != nil {
+		writeError(c, err)
 		return
 	}
-	resp, apiErr := h.svc.Probe(r.Context(), req)
+	resp, apiErr := h.svc.Probe(c.Request.Context(), req)
 	if apiErr != nil {
-		writeError(w, apiErr)
+		writeError(c, apiErr)
 		return
 	}
 	if resp.Tools == nil {
 		resp.Tools = []model.Tool{}
 	}
-	writeJSON(w, http.StatusOK, resp)
+	apiresponse.OK(c, resp)
 }
 
-// callerFromContext lifts the identity + Space stamped by the authenticator
-// (doc §1). Absence means the auth middleware did not run — treated as
-// unauthorized rather than trusting the request.
-func callerFromContext(r *http.Request) (service.Caller, bool) {
-	identity, ok := marketmiddleware.IdentityFromContext(r.Context())
+func callerFromContext(c *gin.Context) (service.Caller, bool) {
+	identity, ok := marketmiddleware.Identity(c)
 	if !ok || identity.UID == "" {
 		return service.Caller{}, false
 	}
-	return service.Caller{
-		UID:     identity.UID,
-		Name:    identity.Name,
-		SpaceID: marketmiddleware.SpaceIDFromContext(r.Context()),
-	}, true
+	return service.Caller{UID: identity.UID, Name: identity.Name, SpaceID: marketmiddleware.SpaceID(c)}, true
 }
 
-func listParams(r *http.Request) service.ListParams {
-	q := r.URL.Query()
+func listParams(c *gin.Context) (service.ListParams, int, int) {
+	page := positiveInt(c.Query("page"), 1)
+	pageSize := positiveInt(c.Query("page_size"), 20)
+	if pageSize > 100 {
+		pageSize = 100
+	}
 	return service.ListParams{
-		Keyword:  strings.TrimSpace(q.Get("keyword")),
-		Category: strings.TrimSpace(q.Get("category")),
-		Limit:    atoiDefault(q.Get("limit"), 0),
-		Offset:   atoiDefault(q.Get("offset"), 0),
-	}
+		Keyword:  strings.TrimSpace(c.Query("keyword")),
+		Category: strings.TrimSpace(c.Query("category")),
+		Limit:    pageSize,
+		Offset:   (page - 1) * pageSize,
+	}, page, pageSize
 }
 
-func atoiDefault(s string, fallback int) int {
-	if s == "" {
-		return fallback
-	}
-	n, err := strconv.Atoi(s)
-	if err != nil {
+func positiveInt(value string, fallback int) int {
+	n, err := strconv.Atoi(value)
+	if err != nil || n < 1 {
 		return fallback
 	}
 	return n
 }
 
-// decodeJSON reads a bounded, strict JSON body. A malformed body is a client
-// error (invalid_request), not a 500.
-func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) *apierr.Error {
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
-	dec := json.NewDecoder(r.Body)
+func decodeJSON(c *gin.Context, dst any) *apierr.Error {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBodyBytes)
+	dec := json.NewDecoder(c.Request.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
 		var maxErr *http.MaxBytesError
@@ -282,18 +387,16 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) *apierr.Error {
 	return nil
 }
 
-func writeJSON(w http.ResponseWriter, status int, body any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(body); err != nil {
-		log.Printf("[handler] encode response: %v", err)
-	}
-}
-
-// writeError renders the doc §2 envelope: {"err":{code,message,details?}}.
-func writeError(w http.ResponseWriter, e *apierr.Error) {
+func writeError(c *gin.Context, e *apierr.Error) {
 	if e.Status >= http.StatusInternalServerError {
 		log.Printf("[handler] %s", e.Error())
 	}
-	writeJSON(w, e.Status, map[string]any{"err": e})
+	details := map[string]any{}
+	if len(e.Details) == 1 {
+		details["field"] = e.Details[0].Field
+		details["reason"] = e.Details[0].Reason
+	} else if len(e.Details) > 1 {
+		details["violations"] = e.Details
+	}
+	apiresponse.Fail(c, e.Status, e.Code, e.Message, details, e.Hint)
 }

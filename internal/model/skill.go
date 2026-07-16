@@ -10,7 +10,7 @@ import (
 
 // SkillVersion represents a version record in the skill's release history.
 type SkillVersion struct {
-	ID        string    `json:"id"`
+	ID        string    `json:"skill_version_id"`
 	SkillID   string    `json:"skill_id"`
 	Version   string    `json:"version"`
 	Changelog string    `json:"changelog"`
@@ -21,7 +21,7 @@ type SkillVersion struct {
 
 // Skill represents a published marketplace skill.
 type Skill struct {
-	ID            string          `json:"id"`
+	ID            string          `json:"skill_id"`
 	Name          string          `json:"name"`
 	DisplayName   string          `json:"display_name"`
 	IconURL       string          `json:"icon_url"`

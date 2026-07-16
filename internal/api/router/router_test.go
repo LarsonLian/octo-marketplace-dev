@@ -207,23 +207,25 @@ func TestProbeRouteEndToEnd(t *testing.T) {
 		t.Fatalf("probe status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 	var resp struct {
-		OK    bool `json:"ok"`
-		Tools []struct {
-			Name        string `json:"name"`
-			Description string `json:"description"`
-		} `json:"tools"`
-		ServerInfo *struct {
-			Name string `json:"name"`
-		} `json:"serverInfo"`
+		Data struct {
+			OK    bool `json:"is_ok"`
+			Tools []struct {
+				Name        string `json:"name"`
+				Description string `json:"description"`
+			} `json:"tools"`
+			ServerInfo *struct {
+				Name string `json:"name"`
+			} `json:"server_info"`
+		} `json:"data"`
 	}
 	if err := json.NewDecoder(recorder.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if !resp.OK || len(resp.Tools) != 1 || resp.Tools[0].Name != "echo" {
+	if !resp.Data.OK || len(resp.Data.Tools) != 1 || resp.Data.Tools[0].Name != "echo" {
 		t.Fatalf("bad probe response: %+v", resp)
 	}
-	if resp.ServerInfo == nil || resp.ServerInfo.Name != "fake" {
-		t.Fatalf("missing serverInfo: %+v", resp.ServerInfo)
+	if resp.Data.ServerInfo == nil || resp.Data.ServerInfo.Name != "fake" {
+		t.Fatalf("missing serverInfo: %+v", resp.Data.ServerInfo)
 	}
 }
 
@@ -245,8 +247,8 @@ func TestProbeRouteStdioRejected(t *testing.T) {
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d want=400 body=%s", recorder.Code, recorder.Body.String())
 	}
-	if !strings.Contains(recorder.Body.String(), "err.marketplace.mcp.probe_unsupported") {
-		t.Fatalf("expected probe_unsupported in body, got %s", recorder.Body.String())
+	if !strings.Contains(recorder.Body.String(), "VALIDATION_ERROR") {
+		t.Fatalf("expected VALIDATION_ERROR in body, got %s", recorder.Body.String())
 	}
 }
 
@@ -305,8 +307,8 @@ func TestAdminProbeRoute(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("POST /api/v1/admin/mcps/probe status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
-	if !strings.Contains(recorder.Body.String(), `"ok":true`) {
-		t.Fatalf("expected ok:true envelope, got %s", recorder.Body.String())
+	if !strings.Contains(recorder.Body.String(), `"is_ok":true`) {
+		t.Fatalf("expected is_ok:true envelope, got %s", recorder.Body.String())
 	}
 }
 
@@ -358,8 +360,8 @@ func TestAdminRejectsMissingTokenInProd(t *testing.T) {
 	if recorder.Code != http.StatusUnauthorized {
 		t.Fatalf("prod-mode missing token status=%d want=401 body=%s", recorder.Code, recorder.Body.String())
 	}
-	if !strings.Contains(recorder.Body.String(), "err.marketplace.auth.admin_unauthorized") {
-		t.Fatalf("expected auth.admin_unauthorized in body, got %s", recorder.Body.String())
+	if !strings.Contains(recorder.Body.String(), "AUTH_REQUIRED") {
+		t.Fatalf("expected AUTH_REQUIRED in body, got %s", recorder.Body.String())
 	}
 	if svc.listed {
 		t.Fatal("prod-mode with missing token must NOT reach the handler")

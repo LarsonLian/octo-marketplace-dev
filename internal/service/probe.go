@@ -79,9 +79,9 @@ type ProbeServerInfo struct {
 // HTTP 200 in both success and operational-failure cases; only auth /
 // malformed-body failures use the standard apierr envelope (§4.7).
 type ProbeResponse struct {
-	OK         bool             `json:"ok"`
+	OK         bool             `json:"is_ok"`
 	Tools      []model.Tool     `json:"tools"`
-	ServerInfo *ProbeServerInfo `json:"serverInfo,omitempty"`
+	ServerInfo *ProbeServerInfo `json:"server_info,omitempty"`
 	Error      *ProbeError      `json:"error,omitempty"`
 }
 

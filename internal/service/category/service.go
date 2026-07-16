@@ -18,7 +18,7 @@ func New(repo *categoryrepo.Repo) *Service {
 
 // CategoryItem is the API-facing representation of a category.
 type CategoryItem struct {
-	ID         string `json:"id"`
+	ID         string `json:"skill_category_id"`
 	Name       string `json:"name"`
 	IconKey    string `json:"icon_key"`
 	SkillCount int    `json:"skill_count"`

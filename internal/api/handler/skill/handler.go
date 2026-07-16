@@ -7,7 +7,9 @@ import (
 	"strconv"
 
 	"github.com/Mininglamp-OSS/octo-marketplace/internal/api/errcode"
+	apiresponse "github.com/Mininglamp-OSS/octo-marketplace/internal/api/response"
 	"github.com/Mininglamp-OSS/octo-marketplace/internal/middleware"
+	"github.com/Mininglamp-OSS/octo-marketplace/internal/model"
 	skillsvc "github.com/Mininglamp-OSS/octo-marketplace/internal/service/skill"
 	"github.com/gin-gonic/gin"
 )
@@ -17,6 +19,12 @@ type Handler struct {
 	svc *skillsvc.Service
 }
 
+type SkillResponse = model.Skill
+
+type SkillVersionList struct {
+	Items []model.SkillVersion `json:"items"`
+}
+
 // New creates a new skill handler.
 func New(svc *skillsvc.Service) *Handler {
 	return &Handler{svc: svc}
@@ -24,24 +32,50 @@ func New(svc *skillsvc.Service) *Handler {
 
 // Register registers skill routes on the given router group.
 func (h *Handler) Register(rg *gin.RouterGroup) {
-	rg.GET("/skill/mine", h.ListMine)
-	rg.GET("/skill", h.List)
-	rg.GET("/skill/:id", h.Get)
-	rg.GET("/skill/:id/versions", h.ListVersions)
-	rg.POST("/skill", h.Create)
-	rg.PUT("/skill/:id", h.Update)
-	rg.DELETE("/skill/:id", h.Delete)
+	rg.GET("/skills/mine", h.ListMine)
+	rg.GET("/skills", h.List)
+	rg.GET("/skills/:skill_id", h.Get)
+	rg.GET("/skills/:skill_id/versions", h.ListVersions)
+	rg.POST("/skills", h.Create)
+	rg.PATCH("/skills/:skill_id", h.Update)
+	rg.DELETE("/skills/:skill_id", h.Delete)
+
+	legacy := rg.Group("/skill", legacyEndpoint("/api/v1/skills"))
+	legacy.GET("/mine", h.ListMine)
+	legacy.GET("", h.List)
+	legacy.GET("/:skill_id", h.Get)
+	legacy.GET("/:skill_id/versions", h.ListVersions)
+	legacy.POST("", h.Create)
+	legacy.PUT("/:skill_id", h.Update)
+	legacy.DELETE("/:skill_id", h.Delete)
 }
 
-// List handles GET /api/v1/skill
+// List godoc
+// @Summary List skills
+// @Description List skills visible in the current Space using cursor pagination.
+// @Tags skill
+// @ID skill.list
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param q query string false "Search query"
+// @Param category_id query string false "Category ID"
+// @Param cursor query string false "Cursor for next page"
+// @Param page_size query int false "Page size, default 20, max 50"
+// @Success 200 {object} apiresponse.CursorList[SkillResponse]
+// @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
+// @Failure 404 {object} apiresponse.Error "NOT_FOUND"
+// @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
+// @Router /skills [get]
 func (h *Handler) List(c *gin.Context) {
 	identity, ok := middleware.Identity(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"code": errcode.Unauthorized, "message": "unauthorized"})
+		apiresponse.Fail(c, http.StatusUnauthorized, errcode.Unauthorized, "unauthorized", nil, "")
 		return
 	}
 	spaceID := middleware.SpaceID(c)
-	limit := parseLimit(c.Query("limit"))
+	limit := parseLimit(pageSizeQuery(c))
 
 	result, err := h.svc.List(c.Request.Context(), skillsvc.ListParams{
 		SpaceID:    spaceID,
@@ -52,28 +86,39 @@ func (h *Handler) List(c *gin.Context) {
 		Limit:      limit,
 	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"code": errcode.InternalError, "message": "internal error"})
+		apiresponse.Fail(c, http.StatusInternalServerError, errcode.InternalError, "internal error", nil, "")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code": 0,
-		"data": gin.H{
-			"items":       result.Items,
-			"next_cursor": result.NextCursor,
-		},
-	})
+	nextCursor := cursorValue(result.NextCursor)
+	apiresponse.Cursor(c, result.Items, nextCursor != "", nextCursor)
 }
 
-// ListMine handles GET /api/v1/skill/mine
+// ListMine godoc
+// @Summary List owned skills
+// @Description List skills owned by the authenticated user in the current Space.
+// @Tags skill
+// @ID skill.mine.list
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param q query string false "Search query"
+// @Param cursor query string false "Cursor for next page"
+// @Param page_size query int false "Page size, default 20, max 50"
+// @Success 200 {object} apiresponse.CursorList[SkillResponse]
+// @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
+// @Failure 404 {object} apiresponse.Error "NOT_FOUND"
+// @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
+// @Router /skills/mine [get]
 func (h *Handler) ListMine(c *gin.Context) {
 	identity, ok := middleware.Identity(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"code": errcode.Unauthorized, "message": "unauthorized"})
+		apiresponse.Fail(c, http.StatusUnauthorized, errcode.Unauthorized, "unauthorized", nil, "")
 		return
 	}
 	spaceID := middleware.SpaceID(c)
-	limit := parseLimit(c.Query("limit"))
+	limit := parseLimit(pageSizeQuery(c))
 
 	result, err := h.svc.ListMine(c.Request.Context(), skillsvc.ListParams{
 		SpaceID: spaceID,
@@ -83,47 +128,53 @@ func (h *Handler) ListMine(c *gin.Context) {
 		Limit:   limit,
 	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"code": errcode.InternalError, "message": "internal error"})
+		apiresponse.Fail(c, http.StatusInternalServerError, errcode.InternalError, "internal error", nil, "")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code": 0,
-		"data": gin.H{
-			"items":       result.Items,
-			"next_cursor": result.NextCursor,
-		},
-	})
+	nextCursor := cursorValue(result.NextCursor)
+	apiresponse.Cursor(c, result.Items, nextCursor != "", nextCursor)
 }
 
-// Get handles GET /api/v1/skill/:id
+// Get godoc
+// @Summary Get skill
+// @Description Return one skill visible to the authenticated caller.
+// @Tags skill
+// @ID skill.get
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param skill_id path string true "Skill ID"
+// @Success 200 {object} apiresponse.Data[SkillResponse]
+// @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
+// @Failure 404 {object} apiresponse.Error "NOT_FOUND"
+// @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
+// @Router /skills/{skill_id} [get]
 func (h *Handler) Get(c *gin.Context) {
 	identity, ok := middleware.Identity(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"code": errcode.Unauthorized, "message": "unauthorized"})
+		apiresponse.Fail(c, http.StatusUnauthorized, errcode.Unauthorized, "unauthorized", nil, "")
 		return
 	}
 	spaceID := middleware.SpaceID(c)
-	id := c.Param("id")
+	id := c.Param("skill_id")
 
 	item, err := h.svc.Get(c.Request.Context(), id, spaceID, identity.UID)
 	if err != nil {
 		if errors.Is(err, skillsvc.ErrNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"code": errcode.NotFound, "message": "not found"})
+			apiresponse.Fail(c, http.StatusNotFound, errcode.NotFound, "not found", nil, "")
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"code": errcode.InternalError, "message": "internal error"})
+		apiresponse.Fail(c, http.StatusInternalServerError, errcode.InternalError, "internal error", nil, "")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code": 0,
-		"data": item,
-	})
+	apiresponse.OK(c, item)
 }
 
 // createRequest is the JSON body for POST /api/v1/skill.
-type createRequest struct {
+type CreateRequest struct {
 	ParseTaskID string          `json:"parse_task_id" binding:"required"`
 	Name        string          `json:"name"`
 	DisplayName string          `json:"display_name"`
@@ -135,18 +186,34 @@ type createRequest struct {
 	Version     string          `json:"version"`
 }
 
-// Create handles POST /api/v1/skill
+// Create godoc
+// @Summary Create skill
+// @Description Publish a parsed Skill archive for the authenticated user and current Space.
+// @Tags skill
+// @ID skill.create
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param body body CreateRequest true "Skill"
+// @Success 201 {object} apiresponse.Data[SkillResponse]
+// @Failure 400 {object} apiresponse.Error "VALIDATION_ERROR"
+// @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
+// @Failure 404 {object} apiresponse.Error "NOT_FOUND"
+// @Failure 409 {object} apiresponse.Error "CONFLICT"
+// @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
+// @Router /skills [post]
 func (h *Handler) Create(c *gin.Context) {
 	identity, ok := middleware.Identity(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"code": errcode.Unauthorized, "message": "unauthorized"})
+		apiresponse.Fail(c, http.StatusUnauthorized, errcode.Unauthorized, "unauthorized", nil, "")
 		return
 	}
 	spaceID := middleware.SpaceID(c)
 
-	var req createRequest
+	var req CreateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"code": errcode.BadRequest, "message": "parse_task_id is required"})
+		apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "parse_task_id is required", nil, "")
 		return
 	}
 
@@ -166,29 +233,26 @@ func (h *Handler) Create(c *gin.Context) {
 	})
 	if err != nil {
 		if errors.Is(err, skillsvc.ErrInvalidParseTask) {
-			c.JSON(http.StatusBadRequest, gin.H{"code": errcode.BadRequest, "message": "invalid or unavailable parse task"})
+			apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "invalid or unavailable parse task", nil, "")
 			return
 		}
 		if errors.Is(err, skillsvc.ErrParseTaskConsumed) {
-			c.JSON(http.StatusConflict, gin.H{"code": errcode.Conflict, "message": "parse task already consumed"})
+			apiresponse.Fail(c, http.StatusConflict, errcode.Conflict, "parse task already consumed", nil, "")
 			return
 		}
 		if errors.Is(err, skillsvc.ErrCategoryNotFound) {
-			c.JSON(http.StatusBadRequest, gin.H{"code": errcode.BadRequest, "message": "category not found"})
+			apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "category not found", nil, "")
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"code": errcode.InternalError, "message": "internal error"})
+		apiresponse.Fail(c, http.StatusInternalServerError, errcode.InternalError, "internal error", nil, "")
 		return
 	}
 
-	c.JSON(http.StatusCreated, gin.H{
-		"code": 0,
-		"data": item,
-	})
+	apiresponse.Created(c, item)
 }
 
 // updateRequest is the JSON body for PUT /api/v1/skill/:id.
-type updateRequest struct {
+type UpdateRequest struct {
 	Name        *string         `json:"name"`
 	DisplayName *string         `json:"display_name"`
 	IconURL     *string         `json:"icon_url"`
@@ -201,19 +265,36 @@ type updateRequest struct {
 	Changelog   string          `json:"changelog"`
 }
 
-// Update handles PUT /api/v1/skill/:id
+// Update godoc
+// @Summary Update skill
+// @Description Partially update a Skill owned by the authenticated user.
+// @Tags skill
+// @ID skill.update
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param skill_id path string true "Skill ID"
+// @Param body body UpdateRequest true "Skill changes"
+// @Success 200 {object} apiresponse.Data[SkillResponse]
+// @Failure 400 {object} apiresponse.Error "VALIDATION_ERROR"
+// @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
+// @Failure 404 {object} apiresponse.Error "NOT_FOUND"
+// @Failure 409 {object} apiresponse.Error "CONFLICT"
+// @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
+// @Router /skills/{skill_id} [patch]
 func (h *Handler) Update(c *gin.Context) {
 	identity, ok := middleware.Identity(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"code": errcode.Unauthorized, "message": "unauthorized"})
+		apiresponse.Fail(c, http.StatusUnauthorized, errcode.Unauthorized, "unauthorized", nil, "")
 		return
 	}
 	spaceID := middleware.SpaceID(c)
-	id := c.Param("id")
+	id := c.Param("skill_id")
 
-	var req updateRequest
+	var req UpdateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"code": errcode.BadRequest, "message": "invalid request body"})
+		apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "invalid request body", nil, "")
 		return
 	}
 
@@ -231,78 +312,123 @@ func (h *Handler) Update(c *gin.Context) {
 	})
 	if err != nil {
 		if errors.Is(err, skillsvc.ErrNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"code": errcode.NotFound, "message": "not found"})
+			apiresponse.Fail(c, http.StatusNotFound, errcode.NotFound, "not found", nil, "")
 			return
 		}
 		if errors.Is(err, skillsvc.ErrCategoryNotFound) {
-			c.JSON(http.StatusBadRequest, gin.H{"code": errcode.BadRequest, "message": "category not found"})
+			apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "category not found", nil, "")
 			return
 		}
 		if errors.Is(err, skillsvc.ErrInvalidParseTask) {
-			c.JSON(http.StatusBadRequest, gin.H{"code": errcode.BadRequest, "message": "invalid or unavailable parse task"})
+			apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "invalid or unavailable parse task", nil, "")
 			return
 		}
 		if errors.Is(err, skillsvc.ErrParseTaskConsumed) {
-			c.JSON(http.StatusConflict, gin.H{"code": errcode.Conflict, "message": "parse task already consumed"})
+			apiresponse.Fail(c, http.StatusConflict, errcode.Conflict, "parse task already consumed", nil, "")
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"code": errcode.InternalError, "message": "internal error"})
+		apiresponse.Fail(c, http.StatusInternalServerError, errcode.InternalError, "internal error", nil, "")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code": 0,
-		"data": item,
-	})
+	apiresponse.OK(c, item)
 }
 
-// Delete handles DELETE /api/v1/skill/:id
+// Delete godoc
+// @Summary Delete skill
+// @Description Delete a Skill owned by the authenticated user.
+// @Tags skill
+// @ID skill.delete
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param skill_id path string true "Skill ID"
+// @Success 200 {object} apiresponse.Data[apiresponse.EmptyResp]
+// @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
+// @Failure 404 {object} apiresponse.Error "NOT_FOUND"
+// @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
+// @Router /skills/{skill_id} [delete]
 func (h *Handler) Delete(c *gin.Context) {
 	identity, ok := middleware.Identity(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"code": errcode.Unauthorized, "message": "unauthorized"})
+		apiresponse.Fail(c, http.StatusUnauthorized, errcode.Unauthorized, "unauthorized", nil, "")
 		return
 	}
 	spaceID := middleware.SpaceID(c)
-	id := c.Param("id")
+	id := c.Param("skill_id")
 
 	err := h.svc.Delete(c.Request.Context(), id, identity.UID, spaceID)
 	if err != nil {
 		if errors.Is(err, skillsvc.ErrNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"code": errcode.NotFound, "message": "not found"})
+			apiresponse.Fail(c, http.StatusNotFound, errcode.NotFound, "not found", nil, "")
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"code": errcode.InternalError, "message": "internal error"})
+		apiresponse.Fail(c, http.StatusInternalServerError, errcode.InternalError, "internal error", nil, "")
 		return
 	}
 
-	c.Status(http.StatusNoContent)
+	apiresponse.Empty(c)
 }
 
-// ListVersions handles GET /api/v1/skill/:id/versions
+// ListVersions godoc
+// @Summary List skill versions
+// @Description List immutable release history for one visible Skill.
+// @Tags skill
+// @ID skill.version.list
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param skill_id path string true "Skill ID"
+// @Success 200 {object} apiresponse.Data[SkillVersionList]
+// @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
+// @Failure 404 {object} apiresponse.Error "NOT_FOUND"
+// @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
+// @Router /skills/{skill_id}/versions [get]
 func (h *Handler) ListVersions(c *gin.Context) {
 	identity, ok := middleware.Identity(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"code": errcode.Unauthorized, "message": "unauthorized"})
+		apiresponse.Fail(c, http.StatusUnauthorized, errcode.Unauthorized, "unauthorized", nil, "")
 		return
 	}
 	spaceID := middleware.SpaceID(c)
-	id := c.Param("id")
+	id := c.Param("skill_id")
 
 	items, err := h.svc.ListVersions(c.Request.Context(), id, spaceID, identity.UID)
 	if err != nil {
 		if errors.Is(err, skillsvc.ErrNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"code": errcode.NotFound, "message": "not found"})
+			apiresponse.Fail(c, http.StatusNotFound, errcode.NotFound, "not found", nil, "")
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"code": errcode.InternalError, "message": "internal error"})
+		apiresponse.Fail(c, http.StatusInternalServerError, errcode.InternalError, "internal error", nil, "")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code": 0,
-		"data": gin.H{"items": items},
-	})
+	apiresponse.OK(c, gin.H{"items": items})
+}
+
+func pageSizeQuery(c *gin.Context) string {
+	if value := c.Query("page_size"); value != "" {
+		return value
+	}
+	return c.Query("limit")
+}
+
+func cursorValue(cursor *string) string {
+	if cursor == nil {
+		return ""
+	}
+	return *cursor
+}
+
+func legacyEndpoint(successor string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header("Deprecation", "true")
+		c.Header("Sunset", "Thu, 01 Oct 2026 00:00:00 GMT")
+		c.Header("Link", "<"+successor+">; rel=\"successor-version\"")
+		c.Next()
+	}
 }
 
 func parseLimit(s string) int {

@@ -32,9 +32,9 @@ type CreateRequest struct {
 	Args          []string          `json:"args"`
 	Env           map[string]string `json:"env"`
 	Headers       map[string]string `json:"headers"`
-	AuthType      string            `json:"authType"`
+	AuthType      string            `json:"auth_type"`
 	Tools         []Tool            `json:"tools"`
-	UsageExamples []string          `json:"usageExamples"`
+	UsageExamples []string          `json:"usage_examples"`
 	FAQs          []FAQ             `json:"faqs"`
 	Notes         []string          `json:"notes"`
 	Visibility    Visibility        `json:"visibility"`
@@ -60,9 +60,9 @@ type PatchRequest struct {
 	Args          *[]string          `json:"args"`
 	Env           *map[string]string `json:"env"`
 	Headers       *map[string]string `json:"headers"`
-	AuthType      *string            `json:"authType"`
+	AuthType      *string            `json:"auth_type"`
 	Tools         *[]Tool            `json:"tools"`
-	UsageExamples *[]string          `json:"usageExamples"`
+	UsageExamples *[]string          `json:"usage_examples"`
 	FAQs          *[]FAQ             `json:"faqs"`
 	Notes         *[]string          `json:"notes"`
 	Visibility    *Visibility        `json:"visibility"`
@@ -72,7 +72,7 @@ type PatchRequest struct {
 // Empty collections collapse to omitted via omitempty.
 type QuickStart struct {
 	Transport  Transport `json:"transport"`
-	ServerName string    `json:"serverName"`
+	ServerName string    `json:"server_name"`
 	// Slug is the ASCII identifier used as the JSON key in the mcpServers
 	// snippet. Frontend template prefers this over ServerName when generating
 	// the config; always present in responses for records created after
@@ -83,41 +83,41 @@ type QuickStart struct {
 	Args     []string          `json:"args,omitempty"`
 	Env      map[string]string `json:"env,omitempty"`
 	Headers  map[string]string `json:"headers,omitempty"`
-	AuthType string            `json:"authType,omitempty"`
+	AuthType string            `json:"auth_type,omitempty"`
 }
 
 // Detail is the full record returned by GET /mcps/{id}, POST /mcps, PATCH
 // /mcps/{id} (doc §3.1). owner_uid is never surfaced.
 type Detail struct {
-	ID            string     `json:"id"`
+	ID            string     `json:"mcp_id"`
 	Name          string     `json:"name"`
 	Slogan        string     `json:"slogan"`
 	Category      string     `json:"category"`
 	Icon          string     `json:"icon"`
 	Tags          []string   `json:"tags"`
-	ToolCount     int        `json:"toolCount"`
+	ToolCount     int        `json:"tool_count"`
 	Visibility    Visibility `json:"visibility"`
-	CreatorName   string     `json:"creatorName"`
-	QuickStart    QuickStart `json:"quickStart"`
+	CreatorName   string     `json:"creator_name"`
+	QuickStart    QuickStart `json:"quick_start"`
 	Tools         []Tool     `json:"tools"`
-	UsageExamples []string   `json:"usageExamples"`
+	UsageExamples []string   `json:"usage_examples"`
 	FAQs          []FAQ      `json:"faqs"`
 	Notes         []string   `json:"notes"`
-	CreatedAt     string     `json:"createdAt"`
-	UpdatedAt     string     `json:"updatedAt"`
+	CreatedAt     string     `json:"created_at"`
+	UpdatedAt     string     `json:"updated_at"`
 }
 
 // ListItem is the projection used by GET /mcps and GET /mcps/mine (doc §3.2).
 type ListItem struct {
-	ID          string     `json:"id"`
+	ID          string     `json:"mcp_id"`
 	Name        string     `json:"name"`
 	Slogan      string     `json:"slogan"`
 	Category    string     `json:"category"`
 	Icon        string     `json:"icon"`
 	Tags        []string   `json:"tags"`
-	ToolCount   int        `json:"toolCount"`
+	ToolCount   int        `json:"tool_count"`
 	Visibility  Visibility `json:"visibility"`
-	CreatorName string     `json:"creatorName"`
+	CreatorName string     `json:"creator_name"`
 }
 
 // CategoryFilter is one filter pill with its live count (doc §4.2). Labels are

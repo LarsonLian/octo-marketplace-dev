@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"strings"
 
+	apiresponse "github.com/Mininglamp-OSS/octo-marketplace/internal/api/response"
 	"github.com/Mininglamp-OSS/octo-marketplace/internal/model"
+	"github.com/gin-gonic/gin"
 )
 
 // AdminAuthenticator guards the /admin/api/v1/* namespace used by octo-admin.
@@ -34,6 +36,22 @@ type AdminAuthenticator struct {
 	token    string
 	identity model.Identity
 	spaceID  string
+}
+
+// Handler guards admin marketplace routes in the Gin router.
+func (a *AdminAuthenticator) Handler() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if a.enabled {
+			supplied := strings.TrimSpace(c.GetHeader("X-Admin-Token"))
+			if a.token == "" || supplied == "" ||
+				subtle.ConstantTimeCompare([]byte(supplied), []byte(a.token)) != 1 {
+				apiresponse.Fail(c, http.StatusUnauthorized, "AUTH_REQUIRED", "Admin authentication is required", nil, "")
+				return
+			}
+		}
+		setAuthContext(c, a.identity, a.spaceID)
+		c.Next()
+	}
 }
 
 // NewAdminAuthenticator constructs the middleware.

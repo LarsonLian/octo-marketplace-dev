@@ -13,7 +13,7 @@ var ErrCategoryNotFound = errors.New("category not found")
 
 // AdminItem is the API-facing representation of a category for admin operations.
 type AdminItem struct {
-	ID        string `json:"id"`
+	ID        string `json:"skill_category_id"`
 	Name      string `json:"name"`
 	IconKey   string `json:"icon_key"`
 	SortOrder int    `json:"sort_order"`

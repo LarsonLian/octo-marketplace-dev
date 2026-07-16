@@ -4,7 +4,7 @@ import "time"
 
 // Category represents a skill classification group.
 type Category struct {
-	ID        string    `json:"id"`
+	ID        string    `json:"skill_category_id"`
 	Name      string    `json:"name"`
 	IconKey   string    `json:"icon_key"`
 	SortOrder int       `json:"sort_order"`

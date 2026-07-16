@@ -22,6 +22,26 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// @title Octo Marketplace API
+// @version 1.0.0
+// @description Skill and MCP marketplace API for OCTO.
+// @contact.name OCTO API Team
+// @contact.url https://github.com/Mininglamp-OSS/octo-marketplace
+// @BasePath /v1
+// @tag.name skill
+// @tag.description Skill catalog and releases
+// @tag.name skill_upload
+// @tag.description Skill artifact ingestion and parsing
+// @tag.name skill_category
+// @tag.description Skill catalog categories
+// @tag.name mcp
+// @tag.description MCP server catalog
+// @tag.name admin_mcp
+// @tag.description Administrative MCP catalog
+// @securityDefinitions.apikey Bearer
+// @in header
+// @name Authorization
+
 func main() {
 	gin.SetMode(gin.ReleaseMode)
 	cfg := config.Load()

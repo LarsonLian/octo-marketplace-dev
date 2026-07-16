@@ -2,11 +2,11 @@ package upload
 
 import (
 	"errors"
-	"io"
 	"log"
 	"net/http"
 
 	"github.com/Mininglamp-OSS/octo-marketplace/internal/api/errcode"
+	apiresponse "github.com/Mininglamp-OSS/octo-marketplace/internal/api/response"
 	"github.com/Mininglamp-OSS/octo-marketplace/internal/middleware"
 	"github.com/Mininglamp-OSS/octo-marketplace/internal/service/parse"
 	skillsvc "github.com/Mininglamp-OSS/octo-marketplace/internal/service/skill"
@@ -32,12 +32,29 @@ func New(parseSvc *parse.Service, skillSvc *skillsvc.Service, localStorage *stor
 
 // Register registers upload/parse/download routes.
 func (h *Handler) Register(rg *gin.RouterGroup) {
-	rg.POST("/skill/upload/init", h.InitUpload)
-	rg.POST("/skill/upload/icon", h.InitIconUpload)
-	rg.POST("/skill/upload/:uploadId/parse", h.TriggerParse)
-	rg.GET("/skill/parse/:taskId", h.PollParse)
-	rg.POST("/skill/:id/reupload/init", h.InitReupload)
-	rg.GET("/skill/:id/download", h.Download)
+	rg.POST("/skill_uploads", h.InitUpload)
+	rg.POST("/skill_icon_uploads", h.InitIconUpload)
+	rg.POST("/skill_uploads/:skill_upload_id/parse", h.TriggerParse)
+	rg.GET("/skill_parse_tasks/:skill_parse_task_id", h.PollParse)
+	rg.POST("/skills/:skill_id/reuploads", h.InitReupload)
+	rg.GET("/skills/:skill_id/download", h.Download)
+
+	legacy := rg.Group("/skill", legacyUploadEndpoint("/api/v1/skills"))
+	legacy.POST("/upload/init", h.InitUpload)
+	legacy.POST("/upload/icon", h.InitIconUpload)
+	legacy.POST("/upload/:skill_upload_id/parse", h.TriggerParse)
+	legacy.GET("/parse/:skill_parse_task_id", h.PollParse)
+	legacy.POST("/:skill_id/reupload/init", h.InitReupload)
+	legacy.GET("/:skill_id/download", h.Download)
+}
+
+func legacyUploadEndpoint(successor string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header("Deprecation", "true")
+		c.Header("Sunset", "Thu, 01 Oct 2026 00:00:00 GMT")
+		c.Header("Link", "<"+successor+">; rel=\"successor-version\"")
+		c.Next()
+	}
 }
 
 // RegisterLocalProxy registers local storage proxy routes (only for STORAGE_DRIVER=local).
@@ -50,265 +67,312 @@ func (h *Handler) RegisterLocalProxy(r *gin.Engine) {
 }
 
 // initRequest is the JSON body for POST /api/v1/skill/upload/init.
-type initRequest struct {
+type InitUploadRequest struct {
 	FileName string `json:"file_name" binding:"required"`
 	FileSize int64  `json:"file_size" binding:"required"`
 }
 
-// InitUpload handles POST /api/v1/skill/upload/init.
+// InitUpload godoc
+// @Summary Initialize Skill upload
+// @Description Create a bounded upload target for a Skill archive without publishing it.
+// @Tags skill_upload
+// @ID skill_upload.create
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param body body InitUploadRequest true "Archive metadata"
+// @Success 200 {object} apiresponse.Data[parse.InitResult]
+// @Failure 400 {object} apiresponse.Error "VALIDATION_ERROR"
+// @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
+// @Failure 404 {object} apiresponse.Error "NOT_FOUND"
+// @Failure 413 {object} apiresponse.Error "PAYLOAD_TOO_LARGE"
+// @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
+// @Router /skill_uploads [post]
 func (h *Handler) InitUpload(c *gin.Context) {
 	identity, ok := middleware.Identity(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"code": errcode.Unauthorized, "message": "unauthorized"})
+		apiresponse.Fail(c, http.StatusUnauthorized, errcode.Unauthorized, "unauthorized", nil, "")
 		return
 	}
 	spaceID := middleware.SpaceID(c)
 
-	var req initRequest
+	var req InitUploadRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"code": errcode.BadRequest, "message": "file_name and file_size are required"})
+		apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "file_name and file_size are required", nil, "")
 		return
 	}
 
 	result, err := h.parseSvc.InitUpload(c.Request.Context(), req.FileName, req.FileSize, identity.UID, spaceID)
 	if err != nil {
 		if errors.Is(err, parse.ErrInvalidFileName) {
-			c.JSON(http.StatusBadRequest, gin.H{"code": errcode.BadRequest, "message": "file_name must end with .zip"})
+			apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "file_name must end with .zip", nil, "")
 			return
 		}
 		if errors.Is(err, parse.ErrFileTooLarge) {
-			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"code": errcode.FileTooLarge, "message": "file exceeds upload size limit"})
+			apiresponse.Fail(c, http.StatusRequestEntityTooLarge, errcode.FileTooLarge, "file exceeds upload size limit", nil, "")
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"code": errcode.InternalError, "message": "internal error"})
+		apiresponse.Fail(c, http.StatusInternalServerError, errcode.InternalError, "internal error", nil, "")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code": 0,
-		"data": result,
-	})
+	apiresponse.OK(c, result)
 }
 
-// TriggerParse handles POST /api/v1/skill/upload/:uploadId/parse.
+// TriggerParse godoc
+// @Summary Parse Skill upload
+// @Description Start parsing a previously initialized Skill archive upload.
+// @Tags skill_upload
+// @ID skill_upload.parse
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param skill_upload_id path string true "Skill upload ID"
+// @Success 200 {object} apiresponse.Data[map[string]string]
+// @Failure 400 {object} apiresponse.Error "VALIDATION_ERROR"
+// @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
+// @Failure 404 {object} apiresponse.Error "NOT_FOUND"
+// @Failure 409 {object} apiresponse.Error "CONFLICT"
+// @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
+// @Router /skill_uploads/{skill_upload_id}/parse [post]
 func (h *Handler) TriggerParse(c *gin.Context) {
 	identity, ok := middleware.Identity(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"code": errcode.Unauthorized, "message": "unauthorized"})
+		apiresponse.Fail(c, http.StatusUnauthorized, errcode.Unauthorized, "unauthorized", nil, "")
 		return
 	}
 
-	uploadID := c.Param("uploadId")
+	uploadID := c.Param("skill_upload_id")
 	taskID, err := h.parseSvc.TriggerParse(c.Request.Context(), uploadID, identity.UID)
 	if err != nil {
 		if errors.Is(err, parse.ErrTaskNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"code": errcode.NotFound, "message": "upload not found"})
+			apiresponse.Fail(c, http.StatusNotFound, errcode.NotFound, "upload not found", nil, "")
 			return
 		}
 		if errors.Is(err, parse.ErrForbidden) {
-			c.JSON(http.StatusNotFound, gin.H{"code": errcode.NotFound, "message": "upload not found"})
+			apiresponse.Fail(c, http.StatusNotFound, errcode.NotFound, "upload not found", nil, "")
 			return
 		}
 		if errors.Is(err, parse.ErrTaskNotPending) {
-			c.JSON(http.StatusConflict, gin.H{"code": errcode.Conflict, "message": "parse already triggered"})
+			apiresponse.Fail(c, http.StatusConflict, errcode.Conflict, "parse already triggered", nil, "")
 			return
 		}
 		log.Printf("[TriggerParse] internal error for uploadID=%s: %v", uploadID, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"code": errcode.InternalError, "message": "internal error"})
+		apiresponse.Fail(c, http.StatusInternalServerError, errcode.InternalError, "internal error", nil, "")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code": 0,
-		"data": gin.H{"task_id": taskID},
-	})
+	apiresponse.OK(c, gin.H{"skill_parse_task_id": taskID})
 }
 
-// PollParse handles GET /api/v1/skill/parse/:taskId.
+// PollParse godoc
+// @Summary Get Skill parse task
+// @Description Return the current parse state for one Skill archive upload.
+// @Tags skill_upload
+// @ID skill_parse_task.get
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param skill_parse_task_id path string true "Skill parse task ID"
+// @Success 200 {object} apiresponse.Data[parse.PollResult]
+// @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
+// @Failure 404 {object} apiresponse.Error "NOT_FOUND"
+// @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
+// @Router /skill_parse_tasks/{skill_parse_task_id} [get]
 func (h *Handler) PollParse(c *gin.Context) {
 	identity, ok := middleware.Identity(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"code": errcode.Unauthorized, "message": "unauthorized"})
+		apiresponse.Fail(c, http.StatusUnauthorized, errcode.Unauthorized, "unauthorized", nil, "")
 		return
 	}
 
-	taskID := c.Param("taskId")
+	taskID := c.Param("skill_parse_task_id")
 	result, err := h.parseSvc.GetParseStatus(c.Request.Context(), taskID, identity.UID)
 	if err != nil {
 		if errors.Is(err, parse.ErrTaskNotFound) || errors.Is(err, parse.ErrForbidden) {
-			c.JSON(http.StatusNotFound, gin.H{"code": errcode.NotFound, "message": "task not found"})
+			apiresponse.Fail(c, http.StatusNotFound, errcode.NotFound, "task not found", nil, "")
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"code": errcode.InternalError, "message": "internal error"})
+		apiresponse.Fail(c, http.StatusInternalServerError, errcode.InternalError, "internal error", nil, "")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code": 0,
-		"data": result,
-	})
+	apiresponse.OK(c, result)
 }
 
 // iconUploadRequest is the JSON body for POST /api/v1/skill/upload/icon.
-type iconUploadRequest struct {
+type IconUploadRequest struct {
 	FileName string `json:"file_name" binding:"required"`
 	FileSize int64  `json:"file_size" binding:"required"`
 }
 
-// InitIconUpload handles POST /api/v1/skill/upload/icon.
+// InitIconUpload godoc
+// @Summary Initialize Skill icon upload
+// @Description Create an upload target for a Skill icon without changing a Skill record.
+// @Tags skill_upload
+// @ID skill_icon_upload.create
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param body body IconUploadRequest true "Icon metadata"
+// @Success 200 {object} apiresponse.Data[parse.IconUploadResult]
+// @Failure 400 {object} apiresponse.Error "VALIDATION_ERROR"
+// @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
+// @Failure 404 {object} apiresponse.Error "NOT_FOUND"
+// @Failure 413 {object} apiresponse.Error "PAYLOAD_TOO_LARGE"
+// @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
+// @Router /skill_icon_uploads [post]
 func (h *Handler) InitIconUpload(c *gin.Context) {
 	identity, ok := middleware.Identity(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"code": errcode.Unauthorized, "message": "unauthorized"})
+		apiresponse.Fail(c, http.StatusUnauthorized, errcode.Unauthorized, "unauthorized", nil, "")
 		return
 	}
 
-	var req iconUploadRequest
+	var req IconUploadRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"code": errcode.BadRequest, "message": "file_name and file_size are required"})
+		apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "file_name and file_size are required", nil, "")
 		return
 	}
 
 	result, err := h.parseSvc.InitIconUpload(c.Request.Context(), req.FileName, req.FileSize, identity.UID)
 	if err != nil {
 		if errors.Is(err, parse.ErrFileTooLarge) {
-			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"code": errcode.FileTooLarge, "message": "icon exceeds 2MB limit"})
+			apiresponse.Fail(c, http.StatusRequestEntityTooLarge, errcode.FileTooLarge, "icon exceeds 2MB limit", nil, "")
 			return
 		}
-		c.JSON(http.StatusBadRequest, gin.H{"code": errcode.BadRequest, "message": err.Error()})
+		apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "invalid icon upload request", nil, "")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code": 0,
-		"data": result,
-	})
+	apiresponse.OK(c, result)
 }
 
 // reuploadRequest is the JSON body for POST /api/v1/skill/:id/reupload/init.
-type reuploadRequest struct {
+type ReuploadRequest struct {
 	FileName string `json:"file_name" binding:"required"`
 	FileSize int64  `json:"file_size" binding:"required"`
 }
 
-// InitReupload handles POST /api/v1/skill/:id/reupload/init.
+// InitReupload godoc
+// @Summary Initialize Skill reupload
+// @Description Create an upload target for a new immutable version of an owned Skill.
+// @Tags skill_upload
+// @ID skill.reupload.create
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param skill_id path string true "Skill ID"
+// @Param body body ReuploadRequest true "Archive metadata"
+// @Success 200 {object} apiresponse.Data[parse.InitResult]
+// @Failure 400 {object} apiresponse.Error "VALIDATION_ERROR"
+// @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
+// @Failure 404 {object} apiresponse.Error "NOT_FOUND"
+// @Failure 413 {object} apiresponse.Error "PAYLOAD_TOO_LARGE"
+// @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
+// @Router /skills/{skill_id}/reuploads [post]
 func (h *Handler) InitReupload(c *gin.Context) {
 	identity, ok := middleware.Identity(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"code": errcode.Unauthorized, "message": "unauthorized"})
+		apiresponse.Fail(c, http.StatusUnauthorized, errcode.Unauthorized, "unauthorized", nil, "")
 		return
 	}
 	spaceID := middleware.SpaceID(c)
-	skillID := c.Param("id")
+	skillID := c.Param("skill_id")
 
 	// Check ownership
 	skill, err := h.skillSvc.Get(c.Request.Context(), skillID, spaceID, identity.UID)
 	if err != nil {
 		if errors.Is(err, skillsvc.ErrNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"code": errcode.NotFound, "message": "not found"})
+			apiresponse.Fail(c, http.StatusNotFound, errcode.NotFound, "not found", nil, "")
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"code": errcode.InternalError, "message": "internal error"})
+		apiresponse.Fail(c, http.StatusInternalServerError, errcode.InternalError, "internal error", nil, "")
 		return
 	}
 	if skill.OwnerID != identity.UID {
-		c.JSON(http.StatusNotFound, gin.H{"code": errcode.NotFound, "message": "not found"})
+		apiresponse.Fail(c, http.StatusNotFound, errcode.NotFound, "not found", nil, "")
 		return
 	}
 
-	var req reuploadRequest
+	var req ReuploadRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"code": errcode.BadRequest, "message": "file_name and file_size are required"})
+		apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "file_name and file_size are required", nil, "")
 		return
 	}
 
 	result, err := h.parseSvc.InitReupload(c.Request.Context(), skillID, req.FileName, req.FileSize, identity.UID, spaceID)
 	if err != nil {
 		if errors.Is(err, parse.ErrInvalidFileName) {
-			c.JSON(http.StatusBadRequest, gin.H{"code": errcode.BadRequest, "message": "file_name must end with .zip"})
+			apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "file_name must end with .zip", nil, "")
 			return
 		}
 		if errors.Is(err, parse.ErrFileTooLarge) {
-			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"code": errcode.FileTooLarge, "message": "file exceeds upload size limit"})
+			apiresponse.Fail(c, http.StatusRequestEntityTooLarge, errcode.FileTooLarge, "file exceeds upload size limit", nil, "")
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"code": errcode.InternalError, "message": "internal error"})
+		apiresponse.Fail(c, http.StatusInternalServerError, errcode.InternalError, "internal error", nil, "")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code": 0,
-		"data": result,
-	})
+	apiresponse.OK(c, result)
 }
 
-// Download handles GET /api/v1/skill/:id/download.
+// Download godoc
+// @Summary Download Skill archive
+// @Description Authorize access and redirect to the artifact URL, or return it when format=json.
+// @Tags skill
+// @ID skill.download
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param skill_id path string true "Skill ID"
+// @Param format query string false "Use json to return the download URL"
+// @Success 200 {object} apiresponse.Data[map[string]string]
+// @Success 302 "Redirect to artifact"
+// @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
+// @Failure 404 {object} apiresponse.Error "NOT_FOUND"
+// @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
+// @Router /skills/{skill_id}/download [get]
 func (h *Handler) Download(c *gin.Context) {
 	identity, ok := middleware.Identity(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"code": errcode.Unauthorized, "message": "unauthorized"})
+		apiresponse.Fail(c, http.StatusUnauthorized, errcode.Unauthorized, "unauthorized", nil, "")
 		return
 	}
 	spaceID := middleware.SpaceID(c)
-	skillID := c.Param("id")
+	skillID := c.Param("skill_id")
 
 	skill, err := h.skillSvc.Get(c.Request.Context(), skillID, spaceID, identity.UID)
 	if err != nil {
 		if errors.Is(err, skillsvc.ErrNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"code": errcode.NotFound, "message": "not found"})
+			apiresponse.Fail(c, http.StatusNotFound, errcode.NotFound, "not found", nil, "")
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"code": errcode.InternalError, "message": "internal error"})
+		apiresponse.Fail(c, http.StatusInternalServerError, errcode.InternalError, "internal error", nil, "")
 		return
 	}
 
 	if skill.FileURL == "" {
-		c.JSON(http.StatusNotFound, gin.H{"code": errcode.NotFound, "message": "no file available"})
+		apiresponse.Fail(c, http.StatusNotFound, errcode.NotFound, "no file available", nil, "")
 		return
 	}
 
 	downloadURL, err := h.parseSvc.GetDownloadURL(c.Request.Context(), skill.FileURL)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"code": errcode.InternalError, "message": "internal error"})
+		apiresponse.Fail(c, http.StatusInternalServerError, errcode.InternalError, "internal error", nil, "")
 		return
 	}
 	if c.Query("format") == "json" {
-		c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{"url": downloadURL}})
+		apiresponse.OK(c, gin.H{"download_url": downloadURL})
 		return
 	}
 
 	c.Redirect(http.StatusFound, downloadURL)
-}
-
-// localUploadProxy handles PUT to local storage (development mode).
-func (h *Handler) localUploadProxy(c *gin.Context) {
-	key := c.Param("key")
-	if key != "" && key[0] == '/' {
-		key = key[1:]
-	}
-
-	if err := h.localStorage.WriteObject(key, c.Request.Body); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "write failed"})
-		return
-	}
-	c.Status(http.StatusOK)
-}
-
-// localDownloadProxy handles GET from local storage (development mode).
-func (h *Handler) localDownloadProxy(c *gin.Context) {
-	key := c.Param("key")
-	if key != "" && key[0] == '/' {
-		key = key[1:]
-	}
-
-	rc, err := h.localStorage.GetObject(c.Request.Context(), key)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "file not found"})
-		return
-	}
-	defer rc.Close()
-
-	c.Header("Content-Type", "application/octet-stream")
-	c.Status(http.StatusOK)
-	_, _ = io.Copy(c.Writer, rc)
 }

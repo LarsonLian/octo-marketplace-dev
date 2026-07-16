@@ -1,34 +1,24 @@
-// Package apierr defines the marketplace HTTP error envelope and the stable
-// err.marketplace.* codes from docs/api/mcp-v1.md §2. Handlers translate a
-// *Error into the wire JSON; the service and repository layers construct them.
-//
-// The envelope is:
-//
-//	{ "err": { "code": "err.marketplace.mcp.not_found", "message": "...",
-//	           "details": [ { "field": "env.GITHUB_TOKEN", "reason": "non_empty" } ] } }
-//
-// message never carries internal paths, credentials, SQL, or Go error strings.
+// Package apierr defines errors for the MCP marketplace service layer.
+// HTTP handlers render these errors with the standard {"error": ...} envelope.
 package apierr
 
 import "net/http"
 
-// Stable wire codes. Always the full err.marketplace.* form (doc §2).
+// Stable wire codes are restricted to the OCTO OpenAPI error enum.
 const (
-	CodeInvalidRequest    = "err.marketplace.mcp.invalid_request"
-	CodeInvalidVisibility = "err.marketplace.mcp.invalid_visibility"
-	CodeInvalidTransport  = "err.marketplace.mcp.invalid_transport"
-	CodeSecretLeaked      = "err.marketplace.mcp.secret_leaked"
-	CodeNotFound          = "err.marketplace.mcp.not_found"
-	CodeForbidden         = "err.marketplace.mcp.forbidden"
-	CodeNameTaken         = "err.marketplace.mcp.name_taken"
-	CodeSlugTaken         = "err.marketplace.mcp.slug_taken"
-	CodeSlugInvalid       = "err.marketplace.mcp.slug_invalid"
-	CodeProbeUnsupported  = "err.marketplace.mcp.probe_unsupported"
-
-	CodeUnauthorized   = "err.marketplace.auth.unauthorized"
-	CodeForbiddenSpace = "err.marketplace.auth.forbidden_space"
-
-	CodeInternal = "err.marketplace.internal"
+	CodeInvalidRequest    = "VALIDATION_ERROR"
+	CodeInvalidVisibility = "VALIDATION_ERROR"
+	CodeInvalidTransport  = "VALIDATION_ERROR"
+	CodeSecretLeaked      = "VALIDATION_ERROR"
+	CodeNotFound          = "NOT_FOUND"
+	CodeForbidden         = "FORBIDDEN"
+	CodeNameTaken         = "DUPLICATE"
+	CodeSlugTaken         = "DUPLICATE"
+	CodeSlugInvalid       = "VALIDATION_ERROR"
+	CodeProbeUnsupported  = "VALIDATION_ERROR"
+	CodeUnauthorized      = "AUTH_REQUIRED"
+	CodeForbiddenSpace    = "FORBIDDEN"
+	CodeInternal          = "INTERNAL_ERROR"
 )
 
 // Detail describes a single offending field for validation errors (doc §2:
@@ -44,7 +34,8 @@ type Error struct {
 	Status  int      `json:"-"`
 	Code    string   `json:"code"`
 	Message string   `json:"message"`
-	Details []Detail `json:"details,omitempty"`
+	Details []Detail `json:"-"`
+	Hint    string   `json:"-"`
 }
 
 func (e *Error) Error() string { return e.Code + ": " + e.Message }
@@ -83,11 +74,11 @@ func SecretLeaked(details ...Detail) *Error {
 }
 
 func Unauthorized() *Error {
-	return New(http.StatusUnauthorized, CodeUnauthorized, "Missing or invalid Octo token")
+	return New(http.StatusUnauthorized, CodeUnauthorized, "Authentication is required")
 }
 
 func ForbiddenSpace() *Error {
-	return New(http.StatusForbidden, CodeForbiddenSpace, "Missing X-Space-Id or Space membership denied")
+	return New(http.StatusForbidden, CodeForbiddenSpace, "Space access is forbidden")
 }
 
 func Forbidden() *Error {

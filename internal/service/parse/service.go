@@ -48,7 +48,7 @@ var ErrForbidden = errors.New("forbidden")
 
 // InitResult is returned from InitUpload.
 type InitResult struct {
-	UploadID     string            `json:"upload_id"`
+	UploadID     string            `json:"skill_upload_id"`
 	PresignedURL string            `json:"presigned_url"`
 	ExpiresIn    int               `json:"expires_in"`
 	Method       string            `json:"method"`
@@ -187,7 +187,7 @@ func (s *Service) TriggerParse(ctx context.Context, uploadID, ownerID string) (s
 // PollResult is returned from GetParseStatus.
 type PollResult struct {
 	Status string      `json:"status"`
-	TaskID string      `json:"task_id"`
+	TaskID string      `json:"skill_parse_task_id"`
 	Result *ParseData  `json:"result,omitempty"`
 	Error  *ParseError `json:"error,omitempty"`
 }
