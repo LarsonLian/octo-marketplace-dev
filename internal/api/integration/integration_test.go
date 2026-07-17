@@ -484,8 +484,7 @@ func TestListMine(t *testing.T) {
 	engine, mock, db := testSetup(t)
 	defer db.Close()
 
-	mock.ExpectQuery("SELECT COUNT").
-		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	// ListMine uses SortLatest → cursor pagination (no COUNT query, uses limit+1)
 	mock.ExpectQuery("SELECT .+ FROM skills").
 		WillReturnRows(skillListRow("s1", "My Skill", "user-1", "Alice", "space-1", "private"))
 
@@ -493,6 +492,49 @@ func TestListMine(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status=%d want=%d body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+	// Verify it returns cursor pagination format
+	body := parseBody(t, w)
+	pagination := body["pagination"].(map[string]interface{})
+	if _, ok := pagination["has_more"]; !ok {
+		t.Error("expected cursor pagination with has_more field")
+	}
+}
+
+func TestListMineCursorPagination(t *testing.T) {
+	engine, mock, db := testSetup(t)
+	defer db.Close()
+
+	now := time.Now().UTC()
+	// Return limit+1 (21) items to trigger has_more=true with next_cursor
+	rows := sqlmock.NewRows(skillCols)
+	for i := range 21 {
+		rows.AddRow(
+			fmt.Sprintf("s%d", i), "Skill", "Skill", "", "desc", "cat-1", []byte(`[]`),
+			"user-1", "Alice", "space-1", "private", "1.0.0",
+			"", "f.zip", "url", int64(100), "sha",
+			now.Add(-time.Duration(i)*time.Minute), now, int64(0), int64(0),
+		)
+	}
+	mock.ExpectQuery("SELECT .+ FROM skills").
+		WillReturnRows(rows)
+
+	w := doRequest(engine, "GET", "/api/v1/skill/mine", nil)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d want=%d body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+	body := parseBody(t, w)
+	items := body["data"].([]interface{})
+	if len(items) != 20 {
+		t.Errorf("expected 20 items, got %d", len(items))
+	}
+	pagination := body["pagination"].(map[string]interface{})
+	if pagination["has_more"] != true {
+		t.Error("expected has_more=true when more results exist")
+	}
+	if pagination["next_cursor"] == nil || pagination["next_cursor"] == "" {
+		t.Error("expected non-empty next_cursor")
 	}
 }
 
