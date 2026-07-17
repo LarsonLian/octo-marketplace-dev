@@ -46,6 +46,11 @@ type Config struct {
 	// Empty disables Redis-backed metrics (counters silently no-op).
 	RedisURL string
 
+	// Flush worker configuration for metrics persistence.
+	MetricsFlushInterval time.Duration // How often to flush (default 30s)
+	MetricsFlushBatch    int           // Dirty keys per SPOP (default 500)
+	MetricsFlushLockTTL  time.Duration // Distributed lock TTL (default 120s)
+
 	// Object storage for MCP icons (S3-compatible). Independent of the skill
 	// archive storage below.
 	Storage StorageConfig
@@ -87,31 +92,34 @@ func (s StorageConfig) Enabled() bool {
 
 func Load() Config {
 	return Config{
-		MySQLDSN:           env("MYSQL_DSN", ""),
-		OctoAPIURL:         strings.TrimRight(env("OCTO_API_URL", ""), "/"),
-		APIPort:            env("API_PORT", "8092"),
-		PublicBaseURL:      strings.TrimRight(env("PUBLIC_BASE_URL", ""), "/"),
-		CORSAllowedOrigins: envCSV("CORS_ALLOWED_ORIGINS"),
-		AuthEnabled:        envBool("AUTH_ENABLED", true),
-		AuthCacheTTL:       envDuration("AUTH_CACHE_TTL", 30*time.Second),
-		AuthCacheCapacity:  envInt("AUTH_CACHE_CAPACITY", 10000),
-		DevAuthUID:         env("DEV_AUTH_UID", "dev-user"),
-		DevAuthName:        env("DEV_AUTH_NAME", "Developer"),
-		DevSpaceID:         env("DEV_SPACE_ID", "dev-space"),
-		AdminToken:         env("MARKETPLACE_ADMIN_TOKEN", ""),
-		AdminOwnerUID:      env("ADMIN_OWNER_UID", ""),
-		AdminOwnerName:     env("ADMIN_OWNER_NAME", ""),
-		ReadHeaderTimeout:  envDuration("HTTP_READ_HEADER_TIMEOUT", 5*time.Second),
-		ReadTimeout:        envDuration("HTTP_READ_TIMEOUT", 15*time.Second),
-		WriteTimeout:       envDuration("HTTP_WRITE_TIMEOUT", 30*time.Second),
-		IdleTimeout:        envDuration("HTTP_IDLE_TIMEOUT", 60*time.Second),
-		ProbeAllowPrivate:  envBool("PROBE_ALLOW_PRIVATE", false),
+		MySQLDSN:             env("MYSQL_DSN", ""),
+		OctoAPIURL:           strings.TrimRight(env("OCTO_API_URL", ""), "/"),
+		APIPort:              env("API_PORT", "8092"),
+		PublicBaseURL:        strings.TrimRight(env("PUBLIC_BASE_URL", ""), "/"),
+		CORSAllowedOrigins:   envCSV("CORS_ALLOWED_ORIGINS"),
+		AuthEnabled:          envBool("AUTH_ENABLED", true),
+		AuthCacheTTL:         envDuration("AUTH_CACHE_TTL", 30*time.Second),
+		AuthCacheCapacity:    envInt("AUTH_CACHE_CAPACITY", 10000),
+		DevAuthUID:           env("DEV_AUTH_UID", "dev-user"),
+		DevAuthName:          env("DEV_AUTH_NAME", "Developer"),
+		DevSpaceID:           env("DEV_SPACE_ID", "dev-space"),
+		AdminToken:           env("MARKETPLACE_ADMIN_TOKEN", ""),
+		AdminOwnerUID:        env("ADMIN_OWNER_UID", ""),
+		AdminOwnerName:       env("ADMIN_OWNER_NAME", ""),
+		ReadHeaderTimeout:    envDuration("HTTP_READ_HEADER_TIMEOUT", 5*time.Second),
+		ReadTimeout:          envDuration("HTTP_READ_TIMEOUT", 15*time.Second),
+		WriteTimeout:         envDuration("HTTP_WRITE_TIMEOUT", 30*time.Second),
+		IdleTimeout:          envDuration("HTTP_IDLE_TIMEOUT", 60*time.Second),
+		ProbeAllowPrivate:    envBool("PROBE_ALLOW_PRIVATE", false),
 
 		SkillParseTimeout:        envDuration("SKILL_PARSE_TIMEOUT", 1*time.Minute),
 		SkillParseStaleTimeout:   envDuration("SKILL_PARSE_STALE_TIMEOUT", 5*time.Minute),
 		SkillParseMaxAttempts:    envInt("SKILL_PARSE_MAX_ATTEMPTS", 2),
 		SkillParseWorkerPoolSize: envInt("SKILL_PARSE_WORKER_POOL_SIZE", 10),
 		RedisURL:                 env("REDIS_URL", ""),
+		MetricsFlushInterval:     envDuration("METRICS_FLUSH_INTERVAL", 30*time.Second),
+		MetricsFlushBatch:        envInt("METRICS_FLUSH_BATCH", 500),
+		MetricsFlushLockTTL:      envDuration("METRICS_FLUSH_LOCK_TTL", 120*time.Second),
 
 		Storage: StorageConfig{
 			Endpoint:      strings.TrimRight(env("STORAGE_ENDPOINT", ""), "/"),
