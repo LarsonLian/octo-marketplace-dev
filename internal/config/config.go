@@ -36,6 +36,12 @@ type Config struct {
 	IdleTimeout       time.Duration
 	ProbeAllowPrivate bool
 
+	// Parse worker configuration for skill zip async parsing.
+	SkillParseTimeout        time.Duration // single parse execution timeout
+	SkillParseStaleTimeout   time.Duration // how long before parsing is considered stuck
+	SkillParseMaxAttempts    int           // max recovery retries before marking failed
+	SkillParseWorkerPoolSize int           // concurrent parse goroutines per pod
+
 	// Object storage for MCP icons (S3-compatible). Independent of the skill
 	// archive storage below.
 	Storage StorageConfig
@@ -96,6 +102,12 @@ func Load() Config {
 		WriteTimeout:       envDuration("HTTP_WRITE_TIMEOUT", 30*time.Second),
 		IdleTimeout:        envDuration("HTTP_IDLE_TIMEOUT", 60*time.Second),
 		ProbeAllowPrivate:  envBool("PROBE_ALLOW_PRIVATE", false),
+
+		SkillParseTimeout:        envDuration("SKILL_PARSE_TIMEOUT", 1*time.Minute),
+		SkillParseStaleTimeout:   envDuration("SKILL_PARSE_STALE_TIMEOUT", 5*time.Minute),
+		SkillParseMaxAttempts:    envInt("SKILL_PARSE_MAX_ATTEMPTS", 2),
+		SkillParseWorkerPoolSize: envInt("SKILL_PARSE_WORKER_POOL_SIZE", 10),
+
 		Storage: StorageConfig{
 			Endpoint:      strings.TrimRight(env("STORAGE_ENDPOINT", ""), "/"),
 			Region:        env("STORAGE_REGION", "us-east-1"),
@@ -146,6 +158,11 @@ func (c Config) ValidateAPI() error {
 	// attributable to a real service account, not "dev-user".
 	if c.AuthEnabled && c.AdminToken != "" && c.AdminOwnerUID == "" {
 		return fmt.Errorf("ADMIN_OWNER_UID is required when AUTH_ENABLED=true and MARKETPLACE_ADMIN_TOKEN is set")
+	}
+	// Parse worker config: staleTimeout must be strictly greater than parseTimeout
+	// so a legitimately-running parse task is not prematurely reclaimed.
+	if c.SkillParseStaleTimeout <= c.SkillParseTimeout {
+		return fmt.Errorf("SKILL_PARSE_STALE_TIMEOUT (%s) must be greater than SKILL_PARSE_TIMEOUT (%s)", c.SkillParseStaleTimeout, c.SkillParseTimeout)
 	}
 	return validatePort(c.APIPort, "API_PORT")
 }

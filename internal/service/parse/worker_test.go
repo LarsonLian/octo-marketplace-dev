@@ -137,15 +137,6 @@ func (s zipStorage) PutObject(context.Context, string, io.Reader, int64, string)
 }
 
 func TestWorkerMarksTaskFailedAfterParseTimeout(t *testing.T) {
-	oldParseTimeout := parseTimeout
-	oldStatusUpdateTimeout := statusUpdateTimeout
-	parseTimeout = 10 * time.Millisecond
-	statusUpdateTimeout = time.Second
-	t.Cleanup(func() {
-		parseTimeout = oldParseTimeout
-		statusUpdateTimeout = oldStatusUpdateTimeout
-	})
-
 	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
 	if err != nil {
 		t.Fatal(err)
@@ -156,7 +147,10 @@ func TestWorkerMarksTaskFailedAfterParseTimeout(t *testing.T) {
 		WithArgs("INTERNAL_ERROR", publicParseErrorMessage("INTERNAL_ERROR"), "task-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	worker := NewWorker(blockingStorage{}, NewRepo(db), db)
+	worker := NewWorker(blockingStorage{}, NewRepo(db), db, WorkerConfig{
+		PoolSize:     5,
+		ParseTimeout: 10 * time.Millisecond,
+	})
 	worker.process("task-1", "skills/upload-1/skill.zip", 1024)
 
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -175,7 +169,7 @@ func TestWorkerSubmitMasksPanicDetails(t *testing.T) {
 		WithArgs("INTERNAL_ERROR", publicParseErrorMessage("INTERNAL_ERROR"), "task-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	worker := NewWorker(panicStorage{}, NewRepo(db), db)
+	worker := NewWorker(panicStorage{}, NewRepo(db), db, WorkerConfig{PoolSize: 5, ParseTimeout: 30 * time.Second})
 	worker.Submit("task-1", "skills/upload-1/skill.zip", 1024)
 	worker.Wait()
 
@@ -214,13 +208,13 @@ func TestWorkerSanitizesReadmeBeforePersisting(t *testing.T) {
 
 	now := time.Date(2026, 7, 17, 0, 0, 0, 0, time.UTC)
 	taskRows := sqlmock.NewRows([]string{
-		"id", "upload_id", "file_name", "file_size", "file_url", "status",
+		"id", "upload_id", "file_name", "file_size", "file_url", "status", "attempts",
 		"error_code", "error_message",
 		"result_name", "result_description", "result_version", "result_tags", "result_readme",
 		"result_id", "result_forked_from", "result_metadata",
 		"file_sha256", "attempts", "owner_id", "space_id", "skill_id", "created_at", "updated_at",
 	}).AddRow(
-		"task-1", "upload-1", "skill.zip", int64(len(zipData)), "skills/upload-1/skill.zip", "parsing",
+		"task-1", "upload-1", "skill.zip", int64(len(zipData)), "skills/upload-1/skill.zip", "parsing", 0,
 		"", "", "", nil, "", []byte("[]"), nil,
 		"", "", nil,
 		"", 0, "user-1", "space-1", "", now, now,
@@ -247,7 +241,7 @@ func TestWorkerSanitizesReadmeBeforePersisting(t *testing.T) {
 		).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	worker := NewWorker(zipStorage{data: zipData}, NewRepo(db), db)
+	worker := NewWorker(zipStorage{data: zipData}, NewRepo(db), db, WorkerConfig{PoolSize: 5, ParseTimeout: 30 * time.Second})
 	worker.process("task-1", "skills/upload-1/skill.zip", int64(len(zipData)+1024))
 
 	if err := mock.ExpectationsWereMet(); err != nil {

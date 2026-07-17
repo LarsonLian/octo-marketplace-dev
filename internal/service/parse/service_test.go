@@ -45,7 +45,7 @@ func (stubStorage) PutObject(context.Context, string, io.Reader, int64, string) 
 var _ storage.Storage = (*stubStorage)(nil)
 
 func TestInitUploadRejectsUnsafeZipFileName(t *testing.T) {
-	svc := NewService(stubStorage{}, nil, nil, func() string { return "upload-1" }, 20)
+	svc := NewService(stubStorage{}, nil, nil, func() string { return "upload-1" }, 20, ServiceConfig{})
 	for _, fileName := range []string{
 		"../skill.zip",
 		"nested/skill.zip",
@@ -62,7 +62,7 @@ func TestInitUploadRejectsUnsafeZipFileName(t *testing.T) {
 }
 
 func TestInitIconUploadRejectsUnsafeFileName(t *testing.T) {
-	svc := NewService(stubStorage{}, nil, nil, func() string { return "icon-1" }, 20)
+	svc := NewService(stubStorage{}, nil, nil, func() string { return "icon-1" }, 20, ServiceConfig{})
 	for _, fileName := range []string{
 		"../icon.png",
 		"nested/icon.png",
@@ -79,7 +79,7 @@ func TestInitIconUploadRejectsUnsafeFileName(t *testing.T) {
 }
 
 func TestInitMcpIconUploadRejectsUnsafeFileName(t *testing.T) {
-	svc := NewService(stubStorage{}, nil, nil, func() string { return "icon-1" }, 20)
+	svc := NewService(stubStorage{}, nil, nil, func() string { return "icon-1" }, 20, ServiceConfig{})
 	for _, fileName := range []string{
 		"../icon.png",
 		"nested/icon.png",
@@ -103,17 +103,17 @@ func TestTriggerParseReturnsConflictWhenPendingStateWasConsumed(t *testing.T) {
 	defer db.Close()
 
 	repo := NewRepo(db)
-	svc := NewService(stubStorage{}, repo, nil, func() string { return "upload-1" }, 20)
+	svc := NewService(stubStorage{}, repo, nil, func() string { return "upload-1" }, 20, ServiceConfig{})
 	now := time.Date(2026, 7, 16, 0, 0, 0, 0, time.UTC)
 
 	rows := sqlmock.NewRows([]string{
-		"id", "upload_id", "file_name", "file_size", "file_url", "status",
+		"id", "upload_id", "file_name", "file_size", "file_url", "status", "attempts",
 		"error_code", "error_message",
 		"result_name", "result_description", "result_version", "result_tags", "result_readme",
 		"result_id", "result_forked_from", "result_metadata",
 		"file_sha256", "attempts", "owner_id", "space_id", "skill_id", "created_at", "updated_at",
 	}).AddRow(
-		"task-1", "upload-1", "skill.zip", int64(1), "skills/upload-1/skill.zip", "pending",
+		"task-1", "upload-1", "skill.zip", int64(1), "skills/upload-1/skill.zip", "pending", 0,
 		"", "", "", nil, "", []byte("[]"), nil,
 		"", "", nil,
 		"", 0, "user-1", "space-1", "", now, now,
@@ -142,17 +142,17 @@ func TestGetParseStatusMasksStoredFailureDetailsAndSanitizesReadme(t *testing.T)
 	defer db.Close()
 
 	repo := NewRepo(db)
-	svc := NewService(stubStorage{}, repo, nil, func() string { return "upload-1" }, 20)
+	svc := NewService(stubStorage{}, repo, nil, func() string { return "upload-1" }, 20, ServiceConfig{})
 	now := time.Date(2026, 7, 17, 0, 0, 0, 0, time.UTC)
 
 	successRows := sqlmock.NewRows([]string{
-		"id", "upload_id", "file_name", "file_size", "file_url", "status",
+		"id", "upload_id", "file_name", "file_size", "file_url", "status", "attempts",
 		"error_code", "error_message",
 		"result_name", "result_description", "result_version", "result_tags", "result_readme",
 		"result_id", "result_forked_from", "result_metadata",
 		"file_sha256", "attempts", "owner_id", "space_id", "skill_id", "created_at", "updated_at",
 	}).AddRow(
-		"task-success", "upload-1", "skill.zip", int64(1), "skills/upload-1/skill.zip", "success",
+		"task-success", "upload-1", "skill.zip", int64(1), "skills/upload-1/skill.zip", "success", 0,
 		"", "", "safe-skill", "desc", "1.0.0", []byte(`["tag"]`), "# Demo\n\n<script>alert(1)</script>\n<div>ok</div>",
 		"", "", nil,
 		"sha", 0, "user-1", "space-1", "", now, now,
@@ -176,13 +176,13 @@ func TestGetParseStatusMasksStoredFailureDetailsAndSanitizesReadme(t *testing.T)
 	}
 
 	failedRows := sqlmock.NewRows([]string{
-		"id", "upload_id", "file_name", "file_size", "file_url", "status",
+		"id", "upload_id", "file_name", "file_size", "file_url", "status", "attempts",
 		"error_code", "error_message",
 		"result_name", "result_description", "result_version", "result_tags", "result_readme",
 		"result_id", "result_forked_from", "result_metadata",
 		"file_sha256", "attempts", "owner_id", "space_id", "skill_id", "created_at", "updated_at",
 	}).AddRow(
-		"task-failed", "upload-2", "skill.zip", int64(1), "skills/upload-2/skill.zip", "failed",
+		"task-failed", "upload-2", "skill.zip", int64(1), "skills/upload-2/skill.zip", "failed", 0,
 		"INTERNAL_ERROR", "panic: db password leaked", "", nil, "", []byte("[]"), nil,
 		"", "", nil,
 		"", 0, "user-1", "space-1", "", now, now,
@@ -200,6 +200,206 @@ func TestGetParseStatusMasksStoredFailureDetailsAndSanitizesReadme(t *testing.T)
 	}
 	if failedResult.Error.Message != publicParseErrorMessage("INTERNAL_ERROR") {
 		t.Fatalf("unexpected public message %q", failedResult.Error.Message)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestGetParseStatusRecoversStaleParsing verifies the lazy recovery path:
+// when a task has been in 'parsing' beyond staleTimeout, a poll atomically
+// reclaims it and re-submits to the worker pool.
+func TestGetParseStatusRecoversStaleParsing(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	repo := NewRepo(db)
+	worker := NewWorker(blockingStorage{}, repo, db, WorkerConfig{PoolSize: 5, ParseTimeout: time.Minute})
+	svc := NewService(stubStorage{}, repo, worker, func() string { return "u1" }, 20, ServiceConfig{
+		StaleTimeout: 2 * time.Minute,
+		MaxAttempts:  2,
+	})
+
+	// Task updated_at is 10 minutes ago — well past 2-minute staleTimeout.
+	staleTime := time.Now().Add(-10 * time.Minute)
+	rows := sqlmock.NewRows([]string{
+		"id", "upload_id", "file_name", "file_size", "file_url", "status", "attempts",
+		"error_code", "error_message",
+		"result_name", "result_description", "result_version", "result_tags", "result_readme",
+		"file_sha256", "owner_id", "space_id", "skill_id", "created_at", "updated_at",
+	}).AddRow(
+		"task-stale", "upload-1", "skill.zip", int64(1024), "skills/upload-1/skill.zip", "parsing", 0,
+		"", "", "", nil, "", []byte("[]"), nil,
+		"", "user-1", "space-1", "", staleTime, staleTime,
+	)
+	mock.ExpectQuery("SELECT id, upload_id, file_name, file_size, file_url, status, attempts").
+		WithArgs("task-stale").
+		WillReturnRows(rows)
+
+	// Expect the atomic recovery UPDATE — this caller wins the race.
+	mock.ExpectExec("UPDATE parse_tasks").
+		WithArgs("task-stale", 120, 2).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	result, err := svc.GetParseStatus(context.Background(), "task-stale", "user-1")
+	if err != nil {
+		t.Fatalf("GetParseStatus: %v", err)
+	}
+	if result.Status != "parsing" {
+		t.Fatalf("status=%q want=parsing", result.Status)
+	}
+	// Worker was submitted — wait for it to finish (it will fail due to blocking storage).
+	worker.Wait()
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestGetParseStatusConcurrentPollOnlyOneWins verifies that when multiple pods
+// poll the same stale task, only the one with affected_rows=1 re-submits.
+func TestGetParseStatusConcurrentPollOnlyOneWins(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	repo := NewRepo(db)
+	worker := NewWorker(blockingStorage{}, repo, db, WorkerConfig{PoolSize: 5, ParseTimeout: time.Minute})
+	svc := NewService(stubStorage{}, repo, worker, func() string { return "u1" }, 20, ServiceConfig{
+		StaleTimeout: 2 * time.Minute,
+		MaxAttempts:  2,
+	})
+
+	staleTime := time.Now().Add(-10 * time.Minute)
+	rows := sqlmock.NewRows([]string{
+		"id", "upload_id", "file_name", "file_size", "file_url", "status", "attempts",
+		"error_code", "error_message",
+		"result_name", "result_description", "result_version", "result_tags", "result_readme",
+		"file_sha256", "owner_id", "space_id", "skill_id", "created_at", "updated_at",
+	}).AddRow(
+		"task-stale", "upload-1", "skill.zip", int64(1024), "skills/upload-1/skill.zip", "parsing", 0,
+		"", "", "", nil, "", []byte("[]"), nil,
+		"", "user-1", "space-1", "", staleTime, staleTime,
+	)
+	mock.ExpectQuery("SELECT id, upload_id, file_name, file_size, file_url, status, attempts").
+		WithArgs("task-stale").
+		WillReturnRows(rows)
+
+	// This caller LOSES the race — affected_rows=0.
+	mock.ExpectExec("UPDATE parse_tasks").
+		WithArgs("task-stale", 120, 2).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	result, err := svc.GetParseStatus(context.Background(), "task-stale", "user-1")
+	if err != nil {
+		t.Fatalf("GetParseStatus: %v", err)
+	}
+	if result.Status != "parsing" {
+		t.Fatalf("status=%q want=parsing (loser should not change status)", result.Status)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestGetParseStatusMaxAttemptsExhausted verifies that once attempts >= maxAttempts
+// the task is marked as failed with PARSE_RETRY_EXHAUSTED.
+func TestGetParseStatusMaxAttemptsExhausted(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	repo := NewRepo(db)
+	svc := NewService(stubStorage{}, repo, nil, func() string { return "u1" }, 20, ServiceConfig{
+		StaleTimeout: 2 * time.Minute,
+		MaxAttempts:  2,
+	})
+
+	staleTime := time.Now().Add(-10 * time.Minute)
+	rows := sqlmock.NewRows([]string{
+		"id", "upload_id", "file_name", "file_size", "file_url", "status", "attempts",
+		"error_code", "error_message",
+		"result_name", "result_description", "result_version", "result_tags", "result_readme",
+		"file_sha256", "owner_id", "space_id", "skill_id", "created_at", "updated_at",
+	}).AddRow(
+		"task-exhausted", "upload-1", "skill.zip", int64(1024), "skills/upload-1/skill.zip", "parsing", 2,
+		"", "", "", nil, "", []byte("[]"), nil,
+		"", "user-1", "space-1", "", staleTime, staleTime,
+	)
+	mock.ExpectQuery("SELECT id, upload_id, file_name, file_size, file_url, status, attempts").
+		WithArgs("task-exhausted").
+		WillReturnRows(rows)
+
+	// Expect MarkRetryExhausted call
+	mock.ExpectExec("UPDATE parse_tasks SET status = 'failed', error_code = 'PARSE_RETRY_EXHAUSTED'").
+		WithArgs("task-exhausted").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	result, err := svc.GetParseStatus(context.Background(), "task-exhausted", "user-1")
+	if err != nil {
+		t.Fatalf("GetParseStatus: %v", err)
+	}
+	if result.Status != "failed" {
+		t.Fatalf("status=%q want=failed", result.Status)
+	}
+	if result.Error == nil || result.Error.Code != "PARSE_RETRY_EXHAUSTED" {
+		t.Fatalf("error=%+v want PARSE_RETRY_EXHAUSTED", result.Error)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestGetParseStatusNonStaleParsingReturnsNormally verifies that a task in
+// 'parsing' status that hasn't exceeded staleTimeout is returned as-is.
+func TestGetParseStatusNonStaleParsingReturnsNormally(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	repo := NewRepo(db)
+	svc := NewService(stubStorage{}, repo, nil, func() string { return "u1" }, 20, ServiceConfig{
+		StaleTimeout: 5 * time.Minute,
+		MaxAttempts:  2,
+	})
+
+	// Updated just 1 minute ago — within staleTimeout.
+	recentTime := time.Now().Add(-1 * time.Minute)
+	rows := sqlmock.NewRows([]string{
+		"id", "upload_id", "file_name", "file_size", "file_url", "status", "attempts",
+		"error_code", "error_message",
+		"result_name", "result_description", "result_version", "result_tags", "result_readme",
+		"file_sha256", "owner_id", "space_id", "skill_id", "created_at", "updated_at",
+	}).AddRow(
+		"task-active", "upload-1", "skill.zip", int64(1024), "skills/upload-1/skill.zip", "parsing", 0,
+		"", "", "", nil, "", []byte("[]"), nil,
+		"", "user-1", "space-1", "", recentTime, recentTime,
+	)
+	mock.ExpectQuery("SELECT id, upload_id, file_name, file_size, file_url, status, attempts").
+		WithArgs("task-active").
+		WillReturnRows(rows)
+
+	result, err := svc.GetParseStatus(context.Background(), "task-active", "user-1")
+	if err != nil {
+		t.Fatalf("GetParseStatus: %v", err)
+	}
+	if result.Status != "parsing" {
+		t.Fatalf("status=%q want=parsing", result.Status)
+	}
+	if result.Error != nil {
+		t.Fatalf("non-stale parsing task should not have error, got %+v", result.Error)
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {
