@@ -11,8 +11,10 @@ func (r *Repo) GetByID(ctx context.Context, id string) (*SkillRow, error) {
 		SELECT s.id, s.name, s.display_name, s.icon_url, s.description, s.category_id, s.tags,
 			s.owner_id, s.owner_name, s.space_id, s.visibility, s.version,
 			s.readme_content, s.file_name, s.file_url, s.file_size, s.file_sha256,
-			s.created_at, s.updated_at
+			s.created_at, s.updated_at,
+			COALESCE(rm.view_count, 0), COALESCE(rm.download_count, 0)
 		FROM skills s
+		LEFT JOIN resource_metrics rm ON rm.resource_type = 'skill' AND rm.resource_id = s.id
 		WHERE s.id = ?
 	`
 	var s SkillRow
@@ -21,6 +23,7 @@ func (r *Repo) GetByID(ctx context.Context, id string) (*SkillRow, error) {
 		&s.OwnerID, &s.OwnerName, &s.SpaceID, &s.Visibility, &s.Version,
 		&s.ReadmeContent, &s.FileName, &s.FileURL, &s.FileSize, &s.FileSHA256,
 		&s.CreatedAt, &s.UpdatedAt,
+		&s.ViewCount, &s.DownloadCount,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
