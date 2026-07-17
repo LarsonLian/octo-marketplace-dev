@@ -295,3 +295,47 @@ func (s stringArg) Match(v driver.Value) bool {
 	got, ok := v.(string)
 	return ok && got == string(s)
 }
+
+func TestValidateUUID(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{"valid UUID", "123e4567-e89b-12d3-a456-426614174000", false},
+		{"valid UUID uppercase", "123E4567-E89B-12D3-A456-426614174000", false},
+		{"valid UUID with trailing junk", "123e4567-e89b-12d3-a456-426614174000junk", true},
+		{"too short", "123e4567-e89b-12d3-a456", true},
+		{"too long", "123e4567-e89b-12d3-a456-426614174000a", true},
+		{"missing dashes", "123e4567e89b12d3a456426614174000xxxx", true},
+		{"contains non-hex", "123g4567-e89b-12d3-a456-426614174000", true},
+		{"forked_from with spaces", " 123e4567-e89b-12d3-a456-426614174000 ", true},
+		{"just text", "not-a-uuid-at-all-nope-nopeeee1234", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := validateUUID(tt.input)
+			if tt.wantErr && result == "" {
+				t.Errorf("validateUUID(%q) = no error, want error", tt.input)
+			}
+			if !tt.wantErr && result != "" {
+				t.Errorf("validateUUID(%q) = %q, want no error", tt.input, result)
+			}
+		})
+	}
+}
+
+func TestWorkerRejectsInvalidFrontmatterID(t *testing.T) {
+	// This test verifies that a valid UUID suffixed with junk is rejected
+	// (the old code would truncate to 36 chars and pass validation).
+	validWithJunk := "123e4567-e89b-12d3-a456-426614174000junk"
+	if err := validateUUID(validWithJunk); err == "" {
+		t.Fatal("expected validateUUID to reject UUID with trailing junk")
+	}
+
+	// forked_from with illegal chars
+	badForked := "123g4567-e89b-12d3-a456-42661417zzzz"
+	if err := validateUUID(badForked); err == "" {
+		t.Fatal("expected validateUUID to reject non-hex characters")
+	}
+}

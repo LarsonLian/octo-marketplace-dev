@@ -153,21 +153,23 @@ func (w *Worker) process(taskID, objectKey string, maxZipBytes int64) {
 		readmePtr = &readme
 	}
 
-	// 6. Prepare extended frontmatter fields
-	resultID := sanitizeString(fm.ID, 36)
-	if resultID != "" {
-		if errMsg := validateUUID(resultID); errMsg != "" {
+	// 6. Prepare extended frontmatter fields — validate raw values BEFORE truncation
+	rawID := strings.TrimSpace(fm.ID)
+	if rawID != "" {
+		if errMsg := validateUUID(rawID); errMsg != "" {
 			w.updateFailed(taskID, "INVALID_SKILL_MD", "frontmatter id 格式非法："+errMsg)
 			return
 		}
 	}
-	resultForkedFrom := sanitizeString(fm.ForkedFrom, 36)
-	if resultForkedFrom != "" {
-		if errMsg := validateUUID(resultForkedFrom); errMsg != "" {
+	rawForkedFrom := strings.TrimSpace(fm.ForkedFrom)
+	if rawForkedFrom != "" {
+		if errMsg := validateUUID(rawForkedFrom); errMsg != "" {
 			w.updateFailed(taskID, "INVALID_SKILL_MD", "frontmatter forked_from 格式非法："+errMsg)
 			return
 		}
 	}
+	resultID := rawID
+	resultForkedFrom := rawForkedFrom
 	var resultMetadata json.RawMessage
 	if fm.RawMetadata != nil {
 		if b, err := json.Marshal(fm.RawMetadata); err == nil {
