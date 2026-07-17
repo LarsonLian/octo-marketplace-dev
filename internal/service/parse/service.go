@@ -15,21 +15,39 @@ import (
 
 // Service handles the upload/parse business logic.
 type Service struct {
-	store  storage.Storage
-	repo   *Repo
-	worker *Worker
-	idGen  func() string
-	maxMB  int
+	store        storage.Storage
+	repo         *Repo
+	worker       *Worker
+	idGen        func() string
+	maxMB        int
+	staleTimeout time.Duration
+	maxAttempts  int
+}
+
+// ServiceConfig holds configuration for the parse service.
+type ServiceConfig struct {
+	StaleTimeout time.Duration
+	MaxAttempts  int
 }
 
 // NewService creates a parse service.
-func NewService(store storage.Storage, repo *Repo, worker *Worker, idGen func() string, maxMB int) *Service {
+func NewService(store storage.Storage, repo *Repo, worker *Worker, idGen func() string, maxMB int, cfg ServiceConfig) *Service {
+	staleTimeout := cfg.StaleTimeout
+	if staleTimeout <= 0 {
+		staleTimeout = 5 * time.Minute
+	}
+	maxAttempts := cfg.MaxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = 2
+	}
 	return &Service{
-		store:  store,
-		repo:   repo,
-		worker: worker,
-		idGen:  idGen,
-		maxMB:  maxMB,
+		store:        store,
+		repo:         repo,
+		worker:       worker,
+		idGen:        idGen,
+		maxMB:        maxMB,
+		staleTimeout: staleTimeout,
+		maxAttempts:  maxAttempts,
 	}
 }
 
@@ -236,6 +254,9 @@ type ParseError struct {
 }
 
 // GetParseStatus polls the parse task status.
+// When the task is stuck in 'parsing' beyond staleTimeout, it attempts atomic
+// recovery: claiming the task via TryRecoverStaleParsing and re-submitting to
+// the worker pool. If max attempts are exceeded, it marks the task as failed.
 func (s *Service) GetParseStatus(ctx context.Context, taskID, ownerID string) (*PollResult, error) {
 	task, err := s.repo.GetByID(ctx, taskID)
 	if err != nil {
@@ -284,6 +305,35 @@ func (s *Service) GetParseStatus(ctx context.Context, taskID, ownerID string) (*
 		result.Error = &ParseError{
 			Code:    task.ErrorCode,
 			Message: publicParseErrorMessage(task.ErrorCode),
+		}
+	case "parsing":
+		// Check if the task is stale and attempt recovery.
+		staleCutoff := time.Now().Add(-s.staleTimeout)
+		if task.UpdatedAt.Before(staleCutoff) {
+			// Task appears stale — attempt atomic recovery.
+			if task.Attempts >= s.maxAttempts {
+				// Exhausted retries; mark as failed.
+				_ = s.repo.MarkRetryExhausted(ctx, task.ID)
+				result.Status = "failed"
+				result.Error = &ParseError{
+					Code:    "PARSE_RETRY_EXHAUSTED",
+					Message: publicParseErrorMessage("PARSE_RETRY_EXHAUSTED"),
+				}
+				return result, nil
+			}
+
+			staleSeconds := int(s.staleTimeout.Seconds())
+			won, err := s.repo.TryRecoverStaleParsing(ctx, task.ID, staleSeconds, s.maxAttempts)
+			if err != nil {
+				// Recovery SQL failed — return current parsing status.
+				return result, nil
+			}
+			if won {
+				// This pod won the race — re-submit to the worker pool.
+				maxBytes := int64(s.maxMB) * 1024 * 1024
+				s.worker.Submit(task.ID, task.FileURL, maxBytes)
+			}
+			// Either way, status is still parsing (recovery just kicked off).
 		}
 	}
 

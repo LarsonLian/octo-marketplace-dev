@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Mininglamp-OSS/octo-marketplace/internal/api/handler"
 	"github.com/Mininglamp-OSS/octo-marketplace/internal/apierr"
@@ -34,6 +35,15 @@ func testAdminAuthenticator() *marketmiddleware.AdminAuthenticator {
 
 func testStorageConfig() StorageConfig {
 	return StorageConfig{Driver: "local", LocalDir: "/tmp/marketplace-test-uploads", BaseURL: "http://127.0.0.1:8092", MaxMB: 20}
+}
+
+func testParseConfig() ParseConfig {
+	return ParseConfig{
+		ParseTimeout:   time.Minute,
+		StaleTimeout:   5 * time.Minute,
+		MaxAttempts:    2,
+		WorkerPoolSize: 10,
+	}
 }
 
 // testHandler is an MCP handler with a nil service; the health/session tests
@@ -77,7 +87,7 @@ func (s *reachedService) UploadIcon(context.Context, service.Caller, string, []b
 
 func TestHealthz(t *testing.T) {
 	recorder := httptest.NewRecorder()
-	Public(stubPinger{}, testAuthenticator(), testAdminAuthenticator(), testStorageConfig(), testHandler(), testAdminHandler()).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	Public(stubPinger{}, testAuthenticator(), testAdminAuthenticator(), testStorageConfig(), testHandler(), testAdminHandler(), testParseConfig()).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status=%d want=%d", recorder.Code, http.StatusOK)
 	}
@@ -95,7 +105,7 @@ func TestReadyz(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			recorder := httptest.NewRecorder()
-			Public(stubPinger{err: tt.err}, testAuthenticator(), testAdminAuthenticator(), testStorageConfig(), testHandler(), testAdminHandler()).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+			Public(stubPinger{err: tt.err}, testAuthenticator(), testAdminAuthenticator(), testStorageConfig(), testHandler(), testAdminHandler(), testParseConfig()).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 			if recorder.Code != tt.want {
 				t.Fatalf("status=%d want=%d", recorder.Code, tt.want)
 			}
@@ -105,7 +115,7 @@ func TestReadyz(t *testing.T) {
 
 func TestSessionUsesDevelopmentIdentity(t *testing.T) {
 	recorder := httptest.NewRecorder()
-	Public(stubPinger{}, testAuthenticator(), testAdminAuthenticator(), testStorageConfig(), testHandler(), testAdminHandler()).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/session", nil))
+	Public(stubPinger{}, testAuthenticator(), testAdminAuthenticator(), testStorageConfig(), testHandler(), testAdminHandler(), testParseConfig()).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/session", nil))
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status=%d want=%d", recorder.Code, http.StatusOK)
 	}
@@ -121,7 +131,7 @@ func TestSessionUsesDevelopmentIdentity(t *testing.T) {
 // front/back alignment on issue LSC-72.
 func TestMCPMountedUnderV1(t *testing.T) {
 	svc := &reachedService{}
-	engine := Public(stubPinger{}, testAuthenticator(), testAdminAuthenticator(), testStorageConfig(), handler.NewMCP(svc), testAdminHandler())
+	engine := Public(stubPinger{}, testAuthenticator(), testAdminAuthenticator(), testStorageConfig(), handler.NewMCP(svc), testAdminHandler(), testParseConfig())
 
 	recorder := httptest.NewRecorder()
 	engine.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/mcps", nil))
@@ -140,7 +150,7 @@ func TestMCPMountedUnderV1(t *testing.T) {
 // contract deploy path (blocker ① on LSC-72).
 func TestBareMCPPathNotMounted(t *testing.T) {
 	svc := &reachedService{}
-	engine := Public(stubPinger{}, testAuthenticator(), testAdminAuthenticator(), testStorageConfig(), handler.NewMCP(svc), testAdminHandler())
+	engine := Public(stubPinger{}, testAuthenticator(), testAdminAuthenticator(), testStorageConfig(), handler.NewMCP(svc), testAdminHandler(), testParseConfig())
 
 	recorder := httptest.NewRecorder()
 	engine.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/mcps", nil))
@@ -192,7 +202,7 @@ func TestProbeRouteEndToEnd(t *testing.T) {
 
 	// Real service (nil store — Probe doesn't touch persistence).
 	realSvc := service.New(nil).WithProbeAllowPrivate(true)
-	engine := Public(stubPinger{}, testAuthenticator(), testAdminAuthenticator(), testStorageConfig(), handler.NewMCP(realSvc), testAdminHandler())
+	engine := Public(stubPinger{}, testAuthenticator(), testAdminAuthenticator(), testStorageConfig(), handler.NewMCP(realSvc), testAdminHandler(), testParseConfig())
 
 	body, _ := json.Marshal(map[string]any{
 		"transport": "streamable-http",
@@ -233,7 +243,7 @@ func TestProbeRouteEndToEnd(t *testing.T) {
 // standard §2 error envelope.
 func TestProbeRouteStdioRejected(t *testing.T) {
 	realSvc := service.New(nil).WithProbeAllowPrivate(true)
-	engine := Public(stubPinger{}, testAuthenticator(), testAdminAuthenticator(), testStorageConfig(), handler.NewMCP(realSvc), testAdminHandler())
+	engine := Public(stubPinger{}, testAuthenticator(), testAdminAuthenticator(), testStorageConfig(), handler.NewMCP(realSvc), testAdminHandler(), testParseConfig())
 
 	body, _ := json.Marshal(map[string]any{
 		"transport": "stdio",
@@ -255,7 +265,7 @@ func TestProbeRouteStdioRejected(t *testing.T) {
 func TestCORSAllowsConfiguredOriginOnly(t *testing.T) {
 	cfg := testStorageConfig()
 	cfg.CORSAllowedOrigins = []string{"https://octo.example.com"}
-	engine := Public(stubPinger{}, testAuthenticator(), testAdminAuthenticator(), cfg, testHandler(), testAdminHandler())
+	engine := Public(stubPinger{}, testAuthenticator(), testAdminAuthenticator(), cfg, testHandler(), testAdminHandler(), testParseConfig())
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	req.Header.Set("Origin", "https://octo.example.com")
@@ -273,7 +283,7 @@ func TestCORSAllowsConfiguredOriginOnly(t *testing.T) {
 func TestCORSRejectsUnconfiguredOrigin(t *testing.T) {
 	cfg := testStorageConfig()
 	cfg.CORSAllowedOrigins = []string{"https://octo.example.com"}
-	engine := Public(stubPinger{}, testAuthenticator(), testAdminAuthenticator(), cfg, testHandler(), testAdminHandler())
+	engine := Public(stubPinger{}, testAuthenticator(), testAdminAuthenticator(), cfg, testHandler(), testAdminHandler(), testParseConfig())
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	req.Header.Set("Origin", "https://evil.example.com")
@@ -326,7 +336,7 @@ func (s *reachedAdminService) Probe(context.Context, service.ProbeRequest) (serv
 func TestAdminProbeRoute(t *testing.T) {
 	svc := &reachedAdminService{}
 	engine := Public(stubPinger{}, testAuthenticator(), testAdminAuthenticator(), testStorageConfig(),
-		testHandler(), handler.NewAdminMCP(svc))
+		testHandler(), handler.NewAdminMCP(svc), testParseConfig())
 
 	req := httptest.NewRequest(
 		http.MethodPost,
@@ -348,7 +358,7 @@ func TestAdminProbeRoute(t *testing.T) {
 func TestAdminMountedUnderV1(t *testing.T) {
 	svc := &reachedAdminService{}
 	engine := Public(stubPinger{}, testAuthenticator(), testAdminAuthenticator(), testStorageConfig(),
-		testHandler(), handler.NewAdminMCP(svc))
+		testHandler(), handler.NewAdminMCP(svc), testParseConfig())
 
 	recorder := httptest.NewRecorder()
 	engine.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/admin/mcps", nil))
@@ -367,7 +377,7 @@ func TestAdminMountedUnderV1(t *testing.T) {
 // failure instead of a silent divergence.
 func TestOldAdminPathNotMounted(t *testing.T) {
 	engine := Public(stubPinger{}, testAuthenticator(), testAdminAuthenticator(), testStorageConfig(),
-		testHandler(), testAdminHandler())
+		testHandler(), testAdminHandler(), testParseConfig())
 
 	recorder := httptest.NewRecorder()
 	engine.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/admin/api/v1/mcps", nil))
@@ -385,7 +395,7 @@ func TestAdminRejectsMissingTokenInProd(t *testing.T) {
 		model.Identity{UID: "platform-admin", Name: "Platform"})
 	svc := &reachedAdminService{}
 	engine := Public(stubPinger{}, testAuthenticator(), prodAdminAuth, testStorageConfig(),
-		testHandler(), handler.NewAdminMCP(svc))
+		testHandler(), handler.NewAdminMCP(svc), testParseConfig())
 
 	recorder := httptest.NewRecorder()
 	engine.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/admin/mcps", nil))
@@ -409,7 +419,7 @@ func TestAdminAcceptsMatchingTokenInProd(t *testing.T) {
 		model.Identity{UID: "platform-admin", Name: "Platform"})
 	svc := &reachedAdminService{}
 	engine := Public(stubPinger{}, testAuthenticator(), prodAdminAuth, testStorageConfig(),
-		testHandler(), handler.NewAdminMCP(svc))
+		testHandler(), handler.NewAdminMCP(svc), testParseConfig())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/mcps", nil)
 	req.Header.Set("X-Admin-Token", "sekret")

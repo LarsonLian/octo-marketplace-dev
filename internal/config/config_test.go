@@ -40,14 +40,23 @@ func TestCORSAllowedOriginsFromEnv(t *testing.T) {
 }
 
 func TestValidateAPI(t *testing.T) {
+	validParse := func(c Config) Config {
+		c.SkillParseTimeout = time.Minute
+		c.SkillParseStaleTimeout = 5 * time.Minute
+		return c
+	}
 	tests := []struct {
 		name    string
 		cfg     Config
 		wantErr bool
 	}{
-		{name: "valid", cfg: Config{MySQLDSN: "dsn", APIPort: "8092"}},
-		{name: "missing dsn", cfg: Config{APIPort: "8092"}, wantErr: true},
-		{name: "invalid port", cfg: Config{MySQLDSN: "dsn", APIPort: "0"}, wantErr: true},
+		{name: "valid", cfg: validParse(Config{MySQLDSN: "dsn", APIPort: "8092"})},
+		{name: "missing dsn", cfg: validParse(Config{APIPort: "8092"}), wantErr: true},
+		{name: "invalid port", cfg: validParse(Config{MySQLDSN: "dsn", APIPort: "0"}), wantErr: true},
+		{name: "staleTimeout <= parseTimeout", cfg: Config{
+			MySQLDSN: "dsn", APIPort: "8092",
+			SkillParseTimeout: 5 * time.Minute, SkillParseStaleTimeout: 5 * time.Minute,
+		}, wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -81,7 +90,8 @@ func TestProbeAllowPrivateFromEnv(t *testing.T) {
 }
 
 func TestAuthEnabledRequiresOctoAPIURL(t *testing.T) {
-	cfg := Config{MySQLDSN: "dsn", APIPort: "8092", AuthEnabled: true}
+	cfg := Config{MySQLDSN: "dsn", APIPort: "8092", AuthEnabled: true,
+		SkillParseTimeout: time.Minute, SkillParseStaleTimeout: 5 * time.Minute}
 	if err := cfg.ValidateAPI(); err == nil {
 		t.Fatal("ValidateAPI() error=nil want OCTO_API_URL error")
 	}

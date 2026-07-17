@@ -20,29 +20,44 @@ import (
 	"github.com/Mininglamp-OSS/octo-marketplace/internal/storage"
 )
 
-const workerPoolSize = 5
+const defaultWorkerPoolSize = 10
 
 var (
-	parseTimeout        = 30 * time.Second
 	statusUpdateTimeout = 5 * time.Second
 )
 
+// WorkerConfig holds configuration for the parse worker pool.
+type WorkerConfig struct {
+	PoolSize     int
+	ParseTimeout time.Duration
+}
+
 // Worker manages the async parsing goroutine pool.
 type Worker struct {
-	store storage.Storage
-	repo  *Repo
-	db    *sql.DB
-	sem   chan struct{}
-	wg    sync.WaitGroup
+	store        storage.Storage
+	repo         *Repo
+	db           *sql.DB
+	sem          chan struct{}
+	wg           sync.WaitGroup
+	parseTimeout time.Duration
 }
 
 // NewWorker creates a parse worker with a bounded goroutine pool.
-func NewWorker(store storage.Storage, repo *Repo, db *sql.DB) *Worker {
+func NewWorker(store storage.Storage, repo *Repo, db *sql.DB, cfg WorkerConfig) *Worker {
+	poolSize := cfg.PoolSize
+	if poolSize <= 0 {
+		poolSize = defaultWorkerPoolSize
+	}
+	parseTimeout := cfg.ParseTimeout
+	if parseTimeout <= 0 {
+		parseTimeout = time.Minute
+	}
 	return &Worker{
-		store: store,
-		repo:  repo,
-		db:    db,
-		sem:   make(chan struct{}, workerPoolSize),
+		store:        store,
+		repo:         repo,
+		db:           db,
+		sem:          make(chan struct{}, poolSize),
+		parseTimeout: parseTimeout,
 	}
 }
 
@@ -71,7 +86,7 @@ func (w *Worker) Wait() {
 }
 
 func (w *Worker) process(taskID, objectKey string, maxZipBytes int64) {
-	ctx, cancel := context.WithTimeout(context.Background(), parseTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), w.parseTimeout)
 	defer cancel()
 
 	// 1. Download zip from storage to a temp file
