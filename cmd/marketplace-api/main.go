@@ -18,8 +18,11 @@ import (
 	"github.com/Mininglamp-OSS/octo-marketplace/internal/middleware"
 	"github.com/Mininglamp-OSS/octo-marketplace/internal/model"
 	"github.com/Mininglamp-OSS/octo-marketplace/internal/repository"
+	metricsrepo "github.com/Mininglamp-OSS/octo-marketplace/internal/repository/metrics"
 	"github.com/Mininglamp-OSS/octo-marketplace/internal/service"
+	metricssvc "github.com/Mininglamp-OSS/octo-marketplace/internal/service/metrics"
 	"github.com/gin-gonic/gin"
+	goredis "github.com/redis/go-redis/v9"
 )
 
 // @title Octo Marketplace API
@@ -106,6 +109,29 @@ func main() {
 	mcpHandler := handler.NewMCP(mcpSvc)
 	adminMCPHandler := handler.NewAdminMCP(mcpSvc)
 
+	// Start flush worker if Redis is configured.
+	flushCtx, flushCancel := context.WithCancel(context.Background())
+	defer flushCancel()
+	if cfg.RedisURL != "" {
+		opts, err := goredis.ParseURL(cfg.RedisURL)
+		if err == nil {
+			rdb := goredis.NewClient(opts)
+			mRepo := metricsrepo.New(database)
+			flushCfg := metricssvc.FlushWorkerConfig{
+				Interval: cfg.MetricsFlushInterval,
+				Batch:    int64(cfg.MetricsFlushBatch),
+				LockTTL:  cfg.MetricsFlushLockTTL,
+			}
+			fw := metricssvc.NewFlushWorker(rdb, mRepo, flushCfg)
+			go fw.Start(flushCtx)
+			log.Printf("[flush-worker] enabled (interval=%s)", cfg.MetricsFlushInterval)
+		} else {
+			log.Printf("[flush-worker] disabled: invalid REDIS_URL: %v", err)
+		}
+	} else {
+		log.Printf("[flush-worker] disabled: REDIS_URL not set")
+	}
+
 	publicServer := &http.Server{
 		Addr: ":" + cfg.APIPort,
 		Handler: router.Public(database, authenticator, adminAuth, router.StorageConfig{
@@ -140,6 +166,7 @@ func main() {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	<-stop
+	flushCancel()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = publicServer.Shutdown(ctx)

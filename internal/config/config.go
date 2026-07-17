@@ -32,15 +32,14 @@ type Config struct {
 	SkillParseMaxAttempts    int           // max recovery retries before marking failed
 	SkillParseWorkerPoolSize int           // concurrent parse goroutines per pod
 
-	// Parse worker configuration for skill zip async parsing.
-	SkillParseTimeout        time.Duration // single parse execution timeout
-	SkillParseStaleTimeout   time.Duration // how long before parsing is considered stuck
-	SkillParseMaxAttempts    int           // max recovery retries before marking failed
-	SkillParseWorkerPoolSize int           // concurrent parse goroutines per pod
-
 	// Redis URL for metrics tracking (e.g. "redis://localhost:6379/0").
 	// Empty disables Redis-backed metrics (counters silently no-op).
 	RedisURL string
+
+	// Flush worker configuration for metrics persistence.
+	MetricsFlushInterval time.Duration // How often to flush (default 30s)
+	MetricsFlushBatch    int           // Dirty keys per SPOP (default 500)
+	MetricsFlushLockTTL  time.Duration // Distributed lock TTL (default 120s)
 
 	// Object storage for MCP icons (S3-compatible). Independent of the skill
 	// archive storage below.
@@ -105,6 +104,9 @@ func Load() Config {
 		SkillParseMaxAttempts:    envInt("SKILL_PARSE_MAX_ATTEMPTS", 2),
 		SkillParseWorkerPoolSize: envInt("SKILL_PARSE_WORKER_POOL_SIZE", 10),
 		RedisURL:                 env("REDIS_URL", ""),
+		MetricsFlushInterval:     envDuration("METRICS_FLUSH_INTERVAL", 30*time.Second),
+		MetricsFlushBatch:        envInt("METRICS_FLUSH_BATCH", 500),
+		MetricsFlushLockTTL:      envDuration("METRICS_FLUSH_LOCK_TTL", 120*time.Second),
 
 		Storage: StorageConfig{
 			Endpoint:      strings.TrimRight(env("STORAGE_ENDPOINT", ""), "/"),
@@ -139,11 +141,6 @@ func (c Config) ValidateAPI() error {
 	}
 	if c.AuthEnabled && c.OctoAPIURL == "" {
 		return fmt.Errorf("OCTO_API_URL is required when AUTH_ENABLED=true")
-	}
-	// Parse worker config: staleTimeout must be strictly greater than parseTimeout
-	// so a legitimately-running parse task is not prematurely reclaimed.
-	if c.SkillParseStaleTimeout <= c.SkillParseTimeout {
-		return fmt.Errorf("SKILL_PARSE_STALE_TIMEOUT (%s) must be greater than SKILL_PARSE_TIMEOUT (%s)", c.SkillParseStaleTimeout, c.SkillParseTimeout)
 	}
 	// Parse worker config: staleTimeout must be strictly greater than parseTimeout
 	// so a legitimately-running parse task is not prematurely reclaimed.
