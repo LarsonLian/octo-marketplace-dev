@@ -69,7 +69,7 @@ func (s *Service) InitUpload(ctx context.Context, fileName string, fileSize int6
 	}
 
 	uploadID := s.idGen()
-	objectKey := fmt.Sprintf("skills/%s/%s", uploadID, fileName)
+	objectKey := fmt.Sprintf("skill-uploads/%s/%s", uploadID, fileName)
 
 	url, headers, err := s.store.PresignPut(ctx, objectKey, "application/zip", time.Hour)
 	if err != nil {
@@ -120,7 +120,7 @@ func (s *Service) InitReupload(ctx context.Context, skillID, fileName string, fi
 	}
 
 	uploadID := s.idGen()
-	objectKey := fmt.Sprintf("skills/%s/%s", uploadID, fileName)
+	objectKey := fmt.Sprintf("skill-uploads/%s/%s", uploadID, fileName)
 
 	url, headers, err := s.store.PresignPut(ctx, objectKey, "application/zip", time.Hour)
 	if err != nil {

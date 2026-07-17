@@ -25,6 +25,9 @@ type Storage interface {
 	// GetObject retrieves an object from storage.
 	GetObject(ctx context.Context, key string) (io.ReadCloser, error)
 
+	// PutObject uploads an object to storage from a reader.
+	PutObject(ctx context.Context, key string, reader io.Reader, size int64, contentType string) error
+
 	// DeleteObject removes an object from storage.
 	DeleteObject(ctx context.Context, key string) error
 

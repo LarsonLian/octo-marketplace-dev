@@ -21,19 +21,31 @@ type SkillVersion struct {
 
 // Skill represents a published marketplace skill.
 type Skill struct {
-	ID            string          `json:"skill_id"`
-	Name          string          `json:"name"`
-	DisplayName   string          `json:"display_name"`
-	IconURL       string          `json:"icon_url"`
-	Description   string          `json:"description"`
-	CategoryID    string          `json:"category_id"`
-	Tags          json.RawMessage `json:"tags"`
-	OwnerName     string          `json:"owner_name"`
-	Visibility    Visibility      `json:"visibility"`
-	Version       string          `json:"version"`
-	ReadmeContent string          `json:"readme_content"`
-	FileName      string          `json:"file_name"`
-	FileSize      int64           `json:"file_size"`
-	CreatedAt     time.Time       `json:"created_at"`
-	UpdatedAt     time.Time       `json:"updated_at"`
+	ID               string          `json:"skill_id"`
+	Name             string          `json:"name"`
+	DisplayName      string          `json:"display_name"`
+	IconURL          string          `json:"icon_url"`
+	SourceSkillID    string          `json:"source_skill_id"`
+	CurrentVersionID string          `json:"current_version_id"`
+	Description      string          `json:"description"`
+	CategoryID       string          `json:"category_id"`
+	Tags             json.RawMessage `json:"tags"`
+	OwnerName        string          `json:"owner_name"`
+	Visibility       Visibility      `json:"visibility"`
+	Version          string          `json:"version"`
+	ReadmeContent    string          `json:"readme_content"`
+	FileName         string          `json:"file_name"`
+	FileSize         int64           `json:"file_size"`
+	CreatedAt        time.Time       `json:"created_at"`
+	UpdatedAt        time.Time       `json:"updated_at"`
+}
+
+// VersionStorage describes where a skill version's artifacts are stored.
+type VersionStorage struct {
+	Type             string `json:"type"`
+	ZipObjectKey     string `json:"zip_object_key"`
+	SkillMdObjectKey string `json:"skill_md_object_key"`
+	ZipFileName      string `json:"zip_file_name"`
+	ZipSize          int64  `json:"zip_size"`
+	ZipSHA256        string `json:"zip_sha256"`
 }

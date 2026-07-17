@@ -38,6 +38,10 @@ func (stubStorage) CopyObject(context.Context, string, string) error {
 	return nil
 }
 
+func (stubStorage) PutObject(context.Context, string, io.Reader, int64, string) error {
+	return nil
+}
+
 var _ storage.Storage = (*stubStorage)(nil)
 
 func TestInitUploadRejectsUnsafeZipFileName(t *testing.T) {
@@ -106,16 +110,18 @@ func TestTriggerParseReturnsConflictWhenPendingStateWasConsumed(t *testing.T) {
 		"id", "upload_id", "file_name", "file_size", "file_url", "status",
 		"error_code", "error_message",
 		"result_name", "result_description", "result_version", "result_tags", "result_readme",
-		"file_sha256", "owner_id", "space_id", "skill_id", "created_at", "updated_at",
+		"result_id", "result_forked_from", "result_metadata",
+		"file_sha256", "attempts", "owner_id", "space_id", "skill_id", "created_at", "updated_at",
 	}).AddRow(
 		"task-1", "upload-1", "skill.zip", int64(1), "skills/upload-1/skill.zip", "pending",
 		"", "", "", nil, "", []byte("[]"), nil,
-		"", "user-1", "space-1", "", now, now,
+		"", "", nil,
+		"", 0, "user-1", "space-1", "", now, now,
 	)
 	mock.ExpectQuery("SELECT id, upload_id, file_name, file_size, file_url, status,").
 		WithArgs("upload-1").
 		WillReturnRows(rows)
-	mock.ExpectExec("UPDATE parse_tasks SET status = 'parsing' WHERE id = \\? AND status = 'pending'").
+	mock.ExpectExec("UPDATE parse_tasks SET status = 'parsing', attempts = attempts \\+ 1 WHERE id = \\? AND status = 'pending'").
 		WithArgs("task-1").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
@@ -143,11 +149,13 @@ func TestGetParseStatusMasksStoredFailureDetailsAndSanitizesReadme(t *testing.T)
 		"id", "upload_id", "file_name", "file_size", "file_url", "status",
 		"error_code", "error_message",
 		"result_name", "result_description", "result_version", "result_tags", "result_readme",
-		"file_sha256", "owner_id", "space_id", "skill_id", "created_at", "updated_at",
+		"result_id", "result_forked_from", "result_metadata",
+		"file_sha256", "attempts", "owner_id", "space_id", "skill_id", "created_at", "updated_at",
 	}).AddRow(
 		"task-success", "upload-1", "skill.zip", int64(1), "skills/upload-1/skill.zip", "success",
 		"", "", "safe-skill", "desc", "1.0.0", []byte(`["tag"]`), "# Demo\n\n<script>alert(1)</script>\n<div>ok</div>",
-		"sha", "user-1", "space-1", "", now, now,
+		"", "", nil,
+		"sha", 0, "user-1", "space-1", "", now, now,
 	)
 	mock.ExpectQuery("SELECT id, upload_id, file_name, file_size, file_url, status,").
 		WithArgs("task-success").
@@ -171,11 +179,13 @@ func TestGetParseStatusMasksStoredFailureDetailsAndSanitizesReadme(t *testing.T)
 		"id", "upload_id", "file_name", "file_size", "file_url", "status",
 		"error_code", "error_message",
 		"result_name", "result_description", "result_version", "result_tags", "result_readme",
-		"file_sha256", "owner_id", "space_id", "skill_id", "created_at", "updated_at",
+		"result_id", "result_forked_from", "result_metadata",
+		"file_sha256", "attempts", "owner_id", "space_id", "skill_id", "created_at", "updated_at",
 	}).AddRow(
 		"task-failed", "upload-2", "skill.zip", int64(1), "skills/upload-2/skill.zip", "failed",
 		"INTERNAL_ERROR", "panic: db password leaked", "", nil, "", []byte("[]"), nil,
-		"", "user-1", "space-1", "", now, now,
+		"", "", nil,
+		"", 0, "user-1", "space-1", "", now, now,
 	)
 	mock.ExpectQuery("SELECT id, upload_id, file_name, file_size, file_url, status,").
 		WithArgs("task-failed").

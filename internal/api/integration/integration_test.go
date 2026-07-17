@@ -73,7 +73,8 @@ func parseBody(t *testing.T, w *httptest.ResponseRecorder) map[string]interface{
 	return result
 }
 
-var skillCols = []string{"id", "name", "display_name", "icon_url", "description", "category_id", "tags",
+var skillCols = []string{"id", "name", "display_name", "icon_url", "source_skill_id", "current_version_id",
+	"description", "category_id", "tags",
 	"owner_id", "owner_name", "space_id", "visibility", "version",
 	"readme_content", "file_name", "file_url", "file_size", "file_sha256",
 	"created_at", "updated_at"}
@@ -81,7 +82,8 @@ var skillCols = []string{"id", "name", "display_name", "icon_url", "description"
 func skillRow(id, name, ownerID, ownerName, spaceID, visibility string) *sqlmock.Rows {
 	now := time.Now().UTC()
 	return sqlmock.NewRows(skillCols).AddRow(
-		id, name, name, "", "description", "cat-1", []byte(`[]`),
+		id, name, name, "", "", "",
+		"description", "cat-1", []byte(`[]`),
 		ownerID, ownerName, spaceID, visibility, "1.0.0",
 		"readme", "file.zip", fmt.Sprintf("skills/%s/v1.0.0/file.zip", id), int64(1024), "sha256",
 		now, now,
@@ -378,7 +380,8 @@ func TestUpdateSkillOwner(t *testing.T) {
 	// Re-fetch after update
 	mock.ExpectQuery("SELECT .+ FROM skills").
 		WillReturnRows(sqlmock.NewRows(skillCols).AddRow(
-			"skill-8", "Updated Skill", "Updated Skill", "", "new desc", "cat-1", []byte(`["updated"]`),
+			"skill-8", "Updated Skill", "Updated Skill", "", "", "",
+			"new desc", "cat-1", []byte(`["updated"]`),
 			"user-1", "Alice", "space-1", "space", "1.0.0",
 			"readme", "file.zip", "skills/skill-8/v1.0.0/file.zip", int64(1024), "sha256",
 			now, now,
@@ -403,10 +406,12 @@ func TestListSkills(t *testing.T) {
 	now := time.Now().UTC()
 	mock.ExpectQuery("SELECT .+ FROM skills").
 		WillReturnRows(sqlmock.NewRows(skillCols).
-			AddRow("s1", "Skill 1", "Skill 1", "", "desc1", "cat-1", []byte(`[]`),
+			AddRow("s1", "Skill 1", "Skill 1", "", "", "",
+				"desc1", "cat-1", []byte(`[]`),
 				"user-1", "Alice", "space-1", "space", "1.0.0",
 				"", "f.zip", "url", int64(100), "sha", now, now).
-			AddRow("s2", "Skill 2", "Skill 2", "", "desc2", "cat-1", []byte(`[]`),
+			AddRow("s2", "Skill 2", "Skill 2", "", "", "",
+				"desc2", "cat-1", []byte(`[]`),
 				"user-2", "Bob", "space-1", "public", "1.0.0",
 				"", "f.zip", "url", int64(200), "sha", now, now))
 
@@ -603,7 +608,8 @@ func TestDownloadSkillRedirect(t *testing.T) {
 	now := time.Now().UTC()
 	mock.ExpectQuery("SELECT .+ FROM skills").
 		WillReturnRows(sqlmock.NewRows(skillCols).AddRow(
-			"skill-dl", "Download Skill", "Download Skill", "", "desc", "cat-1", []byte(`[]`),
+			"skill-dl", "Download Skill", "Download Skill", "", "", "",
+			"desc", "cat-1", []byte(`[]`),
 			"user-1", "Alice", "space-1", "space", "1.0.0",
 			"", "file.zip", fileKey, int64(1024), "sha",
 			now, now,
@@ -642,7 +648,8 @@ func TestDownloadSkillJSON(t *testing.T) {
 	now := time.Now().UTC()
 	mock.ExpectQuery("SELECT .+ FROM skills").
 		WillReturnRows(sqlmock.NewRows(skillCols).AddRow(
-			"skill-dl-json", "Download Skill", "Download Skill", "", "desc", "cat-1", []byte(`[]`),
+			"skill-dl-json", "Download Skill", "Download Skill", "", "", "",
+			"desc", "cat-1", []byte(`[]`),
 			"user-1", "Alice", "space-1", "space", "1.0.0",
 			"", "file.zip", fileKey, int64(1024), "sha", now, now,
 		))
