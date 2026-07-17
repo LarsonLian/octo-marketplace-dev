@@ -40,13 +40,18 @@ func TestListFiltersByAllTags(t *testing.T) {
 	}
 	defer db.Close()
 
+	// With comprehensive sort (default), expect a count query first, then the data query.
+	mock.ExpectQuery("SELECT COUNT").
+		WithArgs("space-1", "space-1", "user-1", "space-1", `"dev"`, `"ai"`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+
 	mock.ExpectQuery("JSON_CONTAINS\\(s\\.tags, \\?\\).*JSON_CONTAINS\\(s\\.tags, \\?\\)").
-		WithArgs("space-1", "space-1", "user-1", "space-1", `"dev"`, `"ai"`, 21).
+		WithArgs("space-1", "space-1", "user-1", "space-1", `"dev"`, `"ai"`, 20, 0).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "name", "display_name", "icon_url", "description", "category_id", "tags",
 			"owner_id", "owner_name", "space_id", "visibility", "version",
 			"readme_content", "file_name", "file_url", "file_size", "file_sha256",
-			"created_at", "updated_at",
+			"created_at", "updated_at", "view_count", "download_count",
 		}))
 
 	_, err = New(db).List(context.Background(), ListFilter{
@@ -70,13 +75,18 @@ func TestListSearchMatchesTagFuzzy(t *testing.T) {
 	}
 	defer db.Close()
 
+	// With comprehensive sort (default), expect a count query first, then the data query.
+	mock.ExpectQuery("SELECT COUNT").
+		WithArgs("space-1", "space-1", "user-1", "space-1", "%auto%", "%auto%", "%auto%", "%auto%").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+
 	mock.ExpectQuery("JSON_SEARCH\\(s\\.tags, 'one', \\?\\) IS NOT NULL").
-		WithArgs("space-1", "space-1", "user-1", "space-1", "%auto%", "%auto%", "%auto%", "%auto%", 21).
+		WithArgs("space-1", "space-1", "user-1", "space-1", "%auto%", "%auto%", "%auto%", "%auto%", 20, 0).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "name", "display_name", "icon_url", "description", "category_id", "tags",
 			"owner_id", "owner_name", "space_id", "visibility", "version",
 			"readme_content", "file_name", "file_url", "file_size", "file_sha256",
-			"created_at", "updated_at",
+			"created_at", "updated_at", "view_count", "download_count",
 		}))
 
 	_, err = New(db).List(context.Background(), ListFilter{

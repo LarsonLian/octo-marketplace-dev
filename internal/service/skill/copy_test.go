@@ -236,13 +236,13 @@ func TestUpdate_GetObjectFailure_NoDBMutation(t *testing.T) {
 		"description", "category_id", "tags", "owner_id", "owner_name",
 		"space_id", "visibility", "version", "readme_content", "file_name", "file_url",
 		"file_size", "file_sha256", "created_at", "updated_at",
-		"resolved_version", "version_storage",
+		"resolved_version", "version_storage", "view_count", "download_count",
 	}).AddRow(
 		"skill-1", "Old Skill", "Old Skill", "", "", "",
 		"desc", "cat-1", []byte(`[]`), "user-1", "User One",
 		"space-1", "space", "1.0.0", "old readme", "old.zip", "skills/skill-1/v1.0.0/old.zip",
 		int64(512), "oldsha", time.Now(), time.Now(),
-		"1.0.0", "",
+		"1.0.0", "", int64(0), int64(0),
 	)
 	mock.ExpectQuery("SELECT .+ FROM skills").
 		WithArgs("skill-1").

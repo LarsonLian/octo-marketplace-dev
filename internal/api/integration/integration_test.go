@@ -77,14 +77,14 @@ var skillCols = []string{"id", "name", "display_name", "icon_url", "source_skill
 	"description", "category_id", "tags",
 	"owner_id", "owner_name", "space_id", "visibility", "version",
 	"readme_content", "file_name", "file_url", "file_size", "file_sha256",
-	"created_at", "updated_at", "resolved_version", "version_storage"}
+	"created_at", "updated_at", "resolved_version", "version_storage", "view_count", "download_count"}
 
-// skillListCols is the column set for List queries (includes version_storage).
+// skillListCols is the column set for List queries (includes version_storage and metrics).
 var skillListCols = []string{"id", "name", "display_name", "icon_url", "source_skill_id", "current_version_id",
 	"description", "category_id", "tags",
 	"owner_id", "owner_name", "space_id", "visibility", "version",
 	"readme_content", "file_name", "file_url", "file_size", "file_sha256",
-	"created_at", "updated_at", "resolved_version", "version_storage"}
+	"created_at", "updated_at", "resolved_version", "version_storage", "view_count", "download_count"}
 
 func skillRow(id, name, ownerID, ownerName, spaceID, visibility string) *sqlmock.Rows {
 	now := time.Now().UTC()
@@ -93,7 +93,7 @@ func skillRow(id, name, ownerID, ownerName, spaceID, visibility string) *sqlmock
 		"description", "cat-1", []byte(`[]`),
 		ownerID, ownerName, spaceID, visibility, "1.0.0",
 		"readme", "file.zip", fmt.Sprintf("skills/%s/v1.0.0/file.zip", id), int64(1024), "sha256",
-		now, now, "1.0.0", "",
+		now, now, "1.0.0", "", int64(0), int64(0),
 	)
 }
 
@@ -104,7 +104,7 @@ func skillListRow(id, name, ownerID, ownerName, spaceID, visibility string) *sql
 		"description", "cat-1", []byte(`[]`),
 		ownerID, ownerName, spaceID, visibility, "1.0.0",
 		"readme", "file.zip", fmt.Sprintf("skills/%s/v1.0.0/file.zip", id), int64(1024), "sha256",
-		now, now, "1.0.0", "",
+		now, now, "1.0.0", "", int64(0), int64(0),
 	)
 }
 
@@ -402,7 +402,7 @@ func TestUpdateSkillOwner(t *testing.T) {
 			"new desc", "cat-1", []byte(`["updated"]`),
 			"user-1", "Alice", "space-1", "space", "1.0.0",
 			"readme", "file.zip", "skills/skill-8/v1.0.0/file.zip", int64(1024), "sha256",
-			now, now, "1.0.0", "",
+			now, now, "1.0.0", "", int64(0), int64(0),
 		))
 
 	w := doRequest(engine, "PUT", "/api/v1/skill/skill-8", map[string]interface{}{
@@ -422,16 +422,19 @@ func TestListSkills(t *testing.T) {
 	defer db.Close()
 
 	now := time.Now().UTC()
+	// Default sort is comprehensive → offset pagination with COUNT first
+	mock.ExpectQuery("SELECT COUNT").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
 	mock.ExpectQuery("SELECT .+ FROM skills").
 		WillReturnRows(sqlmock.NewRows(skillListCols).
 			AddRow("s1", "Skill 1", "Skill 1", "", "", "",
 				"desc1", "cat-1", []byte(`[]`),
 				"user-1", "Alice", "space-1", "space", "1.0.0",
-				"", "f.zip", "url", int64(100), "sha", now, now, "1.0.0", "").
+				"", "f.zip", "url", int64(100), "sha", now, now, "1.0.0", "", int64(0), int64(0)).
 			AddRow("s2", "Skill 2", "Skill 2", "", "", "",
 				"desc2", "cat-1", []byte(`[]`),
 				"user-2", "Bob", "space-1", "public", "1.0.0",
-				"", "f.zip", "url", int64(200), "sha", now, now, "1.0.0", ""))
+				"", "f.zip", "url", int64(200), "sha", now, now, "1.0.0", "", int64(0), int64(0)))
 
 	w := doRequest(engine, "GET", "/api/v1/skill", nil)
 
@@ -449,6 +452,8 @@ func TestListSkillsWithCategoryFilter(t *testing.T) {
 	engine, mock, db := testSetup(t)
 	defer db.Close()
 
+	mock.ExpectQuery("SELECT COUNT").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	mock.ExpectQuery("SELECT .+ FROM skills").
 		WillReturnRows(skillListRow("s1", "Filtered", "user-1", "Alice", "space-1", "space"))
 
@@ -463,6 +468,8 @@ func TestListSkillsSearch(t *testing.T) {
 	engine, mock, db := testSetup(t)
 	defer db.Close()
 
+	mock.ExpectQuery("SELECT COUNT").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	mock.ExpectQuery("SELECT .+ FROM skills").
 		WillReturnRows(sqlmock.NewRows(skillListCols))
 
@@ -477,6 +484,8 @@ func TestListMine(t *testing.T) {
 	engine, mock, db := testSetup(t)
 	defer db.Close()
 
+	mock.ExpectQuery("SELECT COUNT").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	mock.ExpectQuery("SELECT .+ FROM skills").
 		WillReturnRows(skillListRow("s1", "My Skill", "user-1", "Alice", "space-1", "private"))
 
@@ -630,7 +639,7 @@ func TestDownloadSkillRedirect(t *testing.T) {
 			"desc", "cat-1", []byte(`[]`),
 			"user-1", "Alice", "space-1", "space", "1.0.0",
 			"", "file.zip", fileKey, int64(1024), "sha",
-			now, now, "1.0.0", "",
+			now, now, "1.0.0", "", int64(0), int64(0),
 		))
 
 	w := doRequest(engine, "GET", "/api/v1/skill/skill-dl/download", nil)
@@ -669,7 +678,7 @@ func TestDownloadSkillJSON(t *testing.T) {
 			"skill-dl-json", "Download Skill", "Download Skill", "", "", "",
 			"desc", "cat-1", []byte(`[]`),
 			"user-1", "Alice", "space-1", "space", "1.0.0",
-			"", "file.zip", fileKey, int64(1024), "sha", now, now, "1.0.0", "",
+			"", "file.zip", fileKey, int64(1024), "sha", now, now, "1.0.0", "", int64(0), int64(0),
 		))
 
 	w := doRequest(engine, "GET", "/api/v1/skills/skill-dl-json/download?format=json", nil)
