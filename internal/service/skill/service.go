@@ -127,7 +127,8 @@ func (s *Service) List(ctx context.Context, p ListParams) (*ListResult, error) {
 	return s.toListResult(ctx, repoResult), nil
 }
 
-// ListMine returns skills owned by the user.
+// ListMine returns skills owned by the user. Always uses latest (cursor) sort
+// to preserve backward-compatible cursor pagination on the /skills/mine endpoint.
 func (s *Service) ListMine(ctx context.Context, p ListParams) (*ListResult, error) {
 	repoResult, err := s.repo.List(ctx, skillrepo.ListFilter{
 		SpaceID:  p.SpaceID,
@@ -136,6 +137,7 @@ func (s *Service) ListMine(ctx context.Context, p ListParams) (*ListResult, erro
 		Tags:     normalizeTags(p.Tags),
 		Cursor:   p.Cursor,
 		Limit:    p.Limit,
+		Sort:     skillrepo.SortLatest,
 		MineOnly: true,
 	})
 	if err != nil {
