@@ -18,6 +18,8 @@ func publicParseErrorMessage(errorCode string) string {
 		return "SKILL.md 内容不符合要求"
 	case "DUPLICATE_NAME":
 		return "当前 Space 下已存在同名 Skill"
+	case "PARSE_RETRY_EXHAUSTED":
+		return "解析任务多次超时，请重新上传"
 	default:
 		return "解析失败"
 	}

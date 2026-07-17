@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/Mininglamp-OSS/octo-marketplace/internal/api/handler"
 	categoryhandler "github.com/Mininglamp-OSS/octo-marketplace/internal/api/handler/category"
@@ -46,11 +47,19 @@ type StorageConfig struct {
 	CORSAllowedOrigins []string
 }
 
-func Public(database Pinger, authenticator *marketmiddleware.Authenticator, adminAuth *marketmiddleware.AdminAuthenticator, storageCfg StorageConfig, mcp *handler.MCP, adminMCP *handler.AdminMCP) *gin.Engine {
-	return publicWithOptions(database, authenticator, adminAuth, storageCfg, mcp, adminMCP, authenticator.AuthEnabled())
+// ParseConfig holds parse worker/service configuration passed from the caller.
+type ParseConfig struct {
+	ParseTimeout   time.Duration
+	StaleTimeout   time.Duration
+	MaxAttempts    int
+	WorkerPoolSize int
 }
 
-func publicWithOptions(database Pinger, authenticator *marketmiddleware.Authenticator, adminAuth *marketmiddleware.AdminAuthenticator, storageCfg StorageConfig, mcp *handler.MCP, adminMCP *handler.AdminMCP, authEnabled bool) *gin.Engine {
+func Public(database Pinger, authenticator *marketmiddleware.Authenticator, adminAuth *marketmiddleware.AdminAuthenticator, storageCfg StorageConfig, mcp *handler.MCP, adminMCP *handler.AdminMCP, parseCfg ParseConfig) *gin.Engine {
+	return publicWithOptions(database, authenticator, adminAuth, storageCfg, mcp, adminMCP, authenticator.AuthEnabled(), parseCfg)
+}
+
+func publicWithOptions(database Pinger, authenticator *marketmiddleware.Authenticator, adminAuth *marketmiddleware.AdminAuthenticator, storageCfg StorageConfig, mcp *handler.MCP, adminMCP *handler.AdminMCP, authEnabled bool, parseCfg ParseConfig) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery(), corsMiddleware(storageCfg.CORSAllowedOrigins))
 
@@ -128,8 +137,14 @@ func publicWithOptions(database Pinger, authenticator *marketmiddleware.Authenti
 		skillhandler.New(skSvc).Register(v1)
 
 		parseRepo := parsesvc.NewRepo(db)
-		worker := parsesvc.NewWorker(store, parseRepo, db)
-		pSvc := parsesvc.NewService(store, parseRepo, worker, generateID, storageCfg.MaxMB)
+		worker := parsesvc.NewWorker(store, parseRepo, db, parsesvc.WorkerConfig{
+			PoolSize:     parseCfg.WorkerPoolSize,
+			ParseTimeout: parseCfg.ParseTimeout,
+		})
+		pSvc := parsesvc.NewService(store, parseRepo, worker, generateID, storageCfg.MaxMB, parsesvc.ServiceConfig{
+			StaleTimeout: parseCfg.StaleTimeout,
+			MaxAttempts:  parseCfg.MaxAttempts,
+		})
 
 		uploadH := uploadhandler.New(pSvc, skSvc, localStorage, storageCfg.MaxMB)
 		uploadH.Register(v1)
@@ -238,7 +253,12 @@ func generateID() string {
 // engine without wiring MCP or admin handlers.
 func PublicWithDB(db *sql.DB, authenticator *marketmiddleware.Authenticator, storageCfg StorageConfig) *gin.Engine {
 	adminAuth := marketmiddleware.NewAdminAuthenticator(false, nil, model.Identity{})
-	return Public(db, authenticator, adminAuth, storageCfg, nil, nil)
+	return Public(db, authenticator, adminAuth, storageCfg, nil, nil, ParseConfig{
+		ParseTimeout:   time.Minute,
+		StaleTimeout:   5 * time.Minute,
+		MaxAttempts:    2,
+		WorkerPoolSize: 10,
+	})
 }
 
 // PublicWithDBAndAdminAuth is a test helper that mounts the admin surface with
@@ -247,5 +267,10 @@ func PublicWithDB(db *sql.DB, authenticator *marketmiddleware.Authenticator, sto
 // (adminResolver is ignored in that case).
 func PublicWithDBAndAdminAuth(db *sql.DB, authenticator *marketmiddleware.Authenticator, storageCfg StorageConfig, authEnabled bool, adminResolver auth.Resolver) *gin.Engine {
 	adminAuth := marketmiddleware.NewAdminAuthenticator(authEnabled, adminResolver, model.Identity{})
-	return publicWithOptions(db, authenticator, adminAuth, storageCfg, nil, nil, authEnabled)
+	return publicWithOptions(db, authenticator, adminAuth, storageCfg, nil, nil, authEnabled, ParseConfig{
+		ParseTimeout:   time.Minute,
+		StaleTimeout:   5 * time.Minute,
+		MaxAttempts:    2,
+		WorkerPoolSize: 10,
+	})
 }
