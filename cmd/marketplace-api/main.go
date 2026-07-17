@@ -130,7 +130,7 @@ func main() {
 			StaleTimeout:   cfg.SkillParseStaleTimeout,
 			MaxAttempts:    cfg.SkillParseMaxAttempts,
 			WorkerPoolSize: cfg.SkillParseWorkerPoolSize,
-		}),
+		}, router.RedisConfig{URL: cfg.RedisURL}),
 		ReadHeaderTimeout: cfg.ReadHeaderTimeout,
 		ReadTimeout:       cfg.ReadTimeout,
 		WriteTimeout:      cfg.WriteTimeout,
