@@ -19,7 +19,7 @@ func (f *fakeSkillService) Get(_ context.Context, id, spaceID, userID string) (*
 	}
 	item, ok := f.items[id]
 	if !ok {
-		return nil, errors.New("not found")
+		return nil, skillsvc.ErrNotFound
 	}
 	return item, nil
 }
@@ -58,18 +58,22 @@ func TestSkillResolver_CanView_NotFound(t *testing.T) {
 	}
 }
 
-func TestSkillResolver_CanView_ServiceError(t *testing.T) {
+func TestSkillResolver_CanView_InternalError(t *testing.T) {
+	dbErr := errors.New("database connection failed")
 	svc := &fakeSkillService{
-		err: errors.New("internal error"),
+		err: dbErr,
 	}
 	resolver := NewSkillResolver(svc)
 	caller := Caller{UID: "user-1", SpaceID: "space-1"}
 
 	ok, err := resolver.CanView(context.Background(), "skill-1", caller)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("expected error to be propagated for internal errors")
+	}
+	if !errors.Is(err, dbErr) {
+		t.Fatalf("expected original error, got: %v", err)
 	}
 	if ok {
-		t.Fatal("expected CanView to return false on service error")
+		t.Fatal("expected CanView to return false on internal error")
 	}
 }

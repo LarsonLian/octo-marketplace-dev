@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"context"
+	"errors"
 
 	skillsvc "github.com/Mininglamp-OSS/octo-marketplace/internal/service/skill"
 )
@@ -22,10 +23,14 @@ func NewSkillResolver(skillSvc SkillService) *SkillResolver {
 }
 
 // CanView returns true if the skill exists and is visible to the caller.
+// Returns (false, nil) for not-found/not-visible; propagates internal errors.
 func (r *SkillResolver) CanView(ctx context.Context, resourceID string, caller Caller) (bool, error) {
 	item, err := r.skillSvc.Get(ctx, resourceID, caller.SpaceID, caller.UID)
 	if err != nil {
-		return false, nil // skill not found or not visible — treat as "cannot view"
+		if errors.Is(err, skillsvc.ErrNotFound) {
+			return false, nil
+		}
+		return false, err
 	}
 	return item != nil, nil
 }
