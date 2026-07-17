@@ -129,6 +129,24 @@ func (s *OSSStorage) PresignGet(ctx context.Context, key string, expires time.Du
 	return s.publicPresignedURL(result.URL)
 }
 
+// PutObject uploads an object from an io.Reader directly (server-side).
+func (s *OSSStorage) PutObject(ctx context.Context, key string, reader io.Reader, size int64, contentType string) error {
+	input := &s3.PutObjectInput{
+		Bucket:        aws.String(s.bucket),
+		Key:           aws.String(s.key(key)),
+		Body:          reader,
+		ContentLength: aws.Int64(size),
+	}
+	if contentType != "" {
+		input.ContentType = aws.String(contentType)
+	}
+	_, err := s.client.PutObject(ctx, input)
+	if err != nil {
+		return fmt.Errorf("oss put object: %w", err)
+	}
+	return nil
+}
+
 // GetObject downloads an object from storage (uses internal endpoint).
 func (s *OSSStorage) GetObject(ctx context.Context, key string) (io.ReadCloser, error) {
 	output, err := s.client.GetObject(ctx, &s3.GetObjectInput{

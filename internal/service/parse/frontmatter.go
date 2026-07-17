@@ -14,6 +14,11 @@ type FrontmatterResult struct {
 	Description string   `yaml:"description"`
 	Version     string   `yaml:"version"`
 	Tags        []string `yaml:"tags"`
+	ID          string   `yaml:"id"`
+	ForkedFrom  string   `yaml:"forked_from"`
+	// RawMetadata holds the complete parsed YAML map for preserving user
+	// vendor fields (e.g. metadata.openclaw.*) during zip rewrite.
+	RawMetadata map[string]interface{} `yaml:"-"`
 }
 
 // ParseFrontmatter extracts YAML frontmatter from a Markdown file.
@@ -63,6 +68,11 @@ func ParseFrontmatter(content []byte) (FrontmatterResult, string) {
 		if err := yaml.Unmarshal([]byte(fmContent), &result); err == nil {
 			if result.Version == "" {
 				result.Version = "1.0.0"
+			}
+			// Also parse the raw map to preserve unknown/vendor fields
+			var rawMap map[string]interface{}
+			if err := yaml.Unmarshal([]byte(fmContent), &rawMap); err == nil {
+				result.RawMetadata = rawMap
 			}
 			return result, strings.TrimSpace(body)
 		}

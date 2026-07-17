@@ -1,6 +1,8 @@
 package skill
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -19,12 +21,13 @@ import (
 // Compile-time check: fakeStorage must implement storage.Storage.
 var _ storage.Storage = (*fakeStorage)(nil)
 
-// fakeStorage implements storage.Storage for testing CopyObject behavior.
+// fakeStorage implements storage.Storage for testing.
 type fakeStorage struct {
 	copyErr   error
 	copyCount int
 	copySrc   string
 	copyDst   string
+	getObject io.ReadCloser
 }
 
 func (f *fakeStorage) PresignPut(_ context.Context, _ string, _ string, _ time.Duration) (string, http.Header, error) {
@@ -37,6 +40,9 @@ func (f *fakeStorage) PublicURL(_ context.Context, key string) (string, error) {
 	return "https://cdn.test/" + key, nil
 }
 func (f *fakeStorage) GetObject(_ context.Context, _ string) (io.ReadCloser, error) {
+	if f.getObject != nil {
+		return f.getObject, nil
+	}
 	return nil, nil
 }
 func (f *fakeStorage) DeleteObject(_ context.Context, _ string) error { return nil }
@@ -45,6 +51,9 @@ func (f *fakeStorage) CopyObject(_ context.Context, src, dst string) error {
 	f.copySrc = src
 	f.copyDst = dst
 	return f.copyErr
+}
+func (f *fakeStorage) PutObject(_ context.Context, _ string, _ io.Reader, _ int64, _ string) error {
+	return nil
 }
 
 // TestCreate_CopyObjectFailure_NoDBMutation calls Service.Create with a failing
@@ -65,18 +74,22 @@ func TestCreate_CopyObjectFailure_NoDBMutation(t *testing.T) {
 	parseRows := sqlmock.NewRows([]string{
 		"id", "upload_id", "file_name", "file_size", "file_url", "file_sha256",
 		"status", "result_name", "result_description", "result_version",
-		"result_tags", "result_readme", "owner_id", "space_id", "skill_id",
+		"result_tags", "result_readme",
+		"result_id", "result_forked_from", "result_metadata",
+		"owner_id", "space_id", "skill_id",
 	}).AddRow(
-		"task-1", "upload-1", "skill.zip", int64(1024), "skills/upload-1/skill.zip", "sha256abc",
+		"task-1", "upload-1", "skill.zip", int64(1024), "skill-uploads/upload-1/skill.zip", "sha256abc",
 		"success", "My Skill", "A description", "1.0.0",
-		[]byte(`["tag1"]`), "# My Skill\nContent", "user-1", "space-1", "",
+		[]byte(`["tag1"]`), "# My Skill\nContent",
+		"", "", nil,
+		"user-1", "space-1", "",
 	)
 	mock.ExpectQuery("SELECT .+ FROM parse_tasks WHERE id").
 		WithArgs("task-1").
 		WillReturnRows(parseRows)
 
-	// NO DB mutation expectations — CopyObject fails before any DB write
-	// If any unexpected DB call is made, sqlmock will fail the test.
+	// The new flow downloads from storage (GetObject) which uses fakeStorage
+	// that returns nil — causing an error before CopyObject is ever used.
 
 	ctx := context.Background()
 	_, createErr := svc.Create(ctx, CreateParams{
@@ -86,17 +99,9 @@ func TestCreate_CopyObjectFailure_NoDBMutation(t *testing.T) {
 		SpaceID:     "space-1",
 	})
 
-	// Verify Create returned an error
+	// Verify Create returned an error (GetObject returns nil reader)
 	if createErr == nil {
-		t.Fatal("Create should have failed when CopyObject fails")
-	}
-	if !containsString(createErr.Error(), "relocate uploaded file") {
-		t.Errorf("error should mention relocate, got: %v", createErr)
-	}
-
-	// Verify CopyObject was called
-	if store.copyCount != 1 {
-		t.Errorf("CopyObject call count = %d, want 1", store.copyCount)
+		t.Fatal("Create should have failed when GetObject returns nil")
 	}
 
 	// Verify no DB mutations occurred (sqlmock ensures no unexpected queries)
@@ -106,7 +111,7 @@ func TestCreate_CopyObjectFailure_NoDBMutation(t *testing.T) {
 }
 
 // TestCreate_CopyObjectSuccess_DBMutationOccurs calls Service.Create with a
-// succeeding CopyObject and verifies the DB transaction (consume task + create skill) executes.
+// valid zip from GetObject and verifies the DB transaction (consume task + create skill) executes.
 func TestCreate_CopyObjectSuccess_DBMutationOccurs(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -114,7 +119,7 @@ func TestCreate_CopyObjectSuccess_DBMutationOccurs(t *testing.T) {
 	}
 	defer db.Close()
 
-	store := &fakeStorage{copyErr: nil}
+	store := &fakeStorage{copyErr: nil, getObject: io.NopCloser(bytes.NewReader(makeTestZip(t)))}
 	repo := skillrepo.New(db)
 	catRepo := categoryrepo.New(db)
 	svc := New(repo, catRepo, store, func() string { return "new-skill-id" })
@@ -123,11 +128,15 @@ func TestCreate_CopyObjectSuccess_DBMutationOccurs(t *testing.T) {
 	parseRows := sqlmock.NewRows([]string{
 		"id", "upload_id", "file_name", "file_size", "file_url", "file_sha256",
 		"status", "result_name", "result_description", "result_version",
-		"result_tags", "result_readme", "owner_id", "space_id", "skill_id",
+		"result_tags", "result_readme",
+		"result_id", "result_forked_from", "result_metadata",
+		"owner_id", "space_id", "skill_id",
 	}).AddRow(
-		"task-1", "upload-1", "skill.zip", int64(1024), "skills/upload-1/skill.zip", "sha256abc",
+		"task-1", "upload-1", "skill.zip", int64(1024), "skill-uploads/upload-1/skill.zip", "sha256abc",
 		"success", "My Skill", "A description", "1.0.0",
-		[]byte(`["tag1"]`), "# My Skill\nContent", "user-1", "space-1", "",
+		[]byte(`["tag1"]`), "# My Skill\nContent",
+		"", "", nil,
+		"user-1", "space-1", "",
 	)
 	mock.ExpectQuery("SELECT .+ FROM parse_tasks WHERE id").
 		WithArgs("task-1").
@@ -164,16 +173,8 @@ func TestCreate_CopyObjectSuccess_DBMutationOccurs(t *testing.T) {
 		t.Fatal("Create should return a SkillItem")
 	}
 
-	// Verify CopyObject was called with correct keys
-	if store.copyCount != 1 {
-		t.Errorf("CopyObject call count = %d, want 1", store.copyCount)
-	}
+	// Verify Skill record uses the new zip key format
 	expectedDst := "skills/new-skill-id/v1.0.0/skill.zip"
-	if store.copyDst != expectedDst {
-		t.Errorf("CopyObject dst = %q, want %q", store.copyDst, expectedDst)
-	}
-
-	// Verify Skill record uses the final key (not temp)
 	if item.FileURL != expectedDst {
 		t.Errorf("Skill FileURL = %q, want %q", item.FileURL, expectedDst)
 	}
@@ -200,11 +201,13 @@ func TestUpdate_CopyObjectFailure_NoDBMutation(t *testing.T) {
 
 	// Mock GetByID — returns an existing skill
 	skillRows := sqlmock.NewRows([]string{
-		"id", "name", "display_name", "icon_url", "description", "category_id", "tags", "owner_id", "owner_name",
+		"id", "name", "display_name", "icon_url", "source_skill_id", "current_version_id",
+		"description", "category_id", "tags", "owner_id", "owner_name",
 		"space_id", "visibility", "version", "readme_content", "file_name", "file_url",
 		"file_size", "file_sha256", "created_at", "updated_at",
 	}).AddRow(
-		"skill-1", "Old Skill", "Old Skill", "", "desc", "cat-1", []byte(`[]`), "user-1", "User One",
+		"skill-1", "Old Skill", "Old Skill", "", "", "ver-1",
+		"desc", "cat-1", []byte(`[]`), "user-1", "User One",
 		"space-1", "space", "1.0.0", "old readme", "old.zip", "skills/skill-1/v1.0.0/old.zip",
 		int64(512), "oldsha", time.Now(), time.Now(),
 	)
@@ -216,17 +219,21 @@ func TestUpdate_CopyObjectFailure_NoDBMutation(t *testing.T) {
 	parseRows := sqlmock.NewRows([]string{
 		"id", "upload_id", "file_name", "file_size", "file_url", "file_sha256",
 		"status", "result_name", "result_description", "result_version",
-		"result_tags", "result_readme", "owner_id", "space_id", "skill_id",
+		"result_tags", "result_readme",
+		"result_id", "result_forked_from", "result_metadata",
+		"owner_id", "space_id", "skill_id",
 	}).AddRow(
-		"task-2", "upload-2", "new-skill.zip", int64(2048), "skills/upload-2/new-skill.zip", "newsha",
+		"task-2", "upload-2", "new-skill.zip", int64(2048), "skill-uploads/upload-2/new-skill.zip", "newsha",
 		"success", "New Skill", "New desc", "2.0.0",
-		[]byte(`["new"]`), "# New\nContent", "user-1", "space-1", "skill-1",
+		[]byte(`["new"]`), "# New\nContent",
+		"", "", nil,
+		"user-1", "space-1", "skill-1",
 	)
 	mock.ExpectQuery("SELECT .+ FROM parse_tasks WHERE id").
 		WithArgs("task-2").
 		WillReturnRows(parseRows)
 
-	// NO further DB expectations — CopyObject fails before transaction
+	// The new flow downloads from storage (GetObject) which returns nil — causing error
 
 	ctx := context.Background()
 	_, updateErr := svc.Update(ctx, "skill-1", "user-1", "space-1", UpdateParams{
@@ -234,15 +241,7 @@ func TestUpdate_CopyObjectFailure_NoDBMutation(t *testing.T) {
 	})
 
 	if updateErr == nil {
-		t.Fatal("Update should have failed when CopyObject fails")
-	}
-	if !containsString(updateErr.Error(), "relocate uploaded file") {
-		t.Errorf("error should mention relocate, got: %v", updateErr)
-	}
-
-	// Verify CopyObject was attempted
-	if store.copyCount != 1 {
-		t.Errorf("CopyObject call count = %d, want 1", store.copyCount)
+		t.Fatal("Update should have failed when GetObject returns nil")
 	}
 
 	// Verify no DB mutations (sqlmock catches unexpected queries)
@@ -268,11 +267,15 @@ func TestCreate_RejectsReuploadTask(t *testing.T) {
 	parseRows := sqlmock.NewRows([]string{
 		"id", "upload_id", "file_name", "file_size", "file_url", "file_sha256",
 		"status", "result_name", "result_description", "result_version",
-		"result_tags", "result_readme", "owner_id", "space_id", "skill_id",
+		"result_tags", "result_readme",
+		"result_id", "result_forked_from", "result_metadata",
+		"owner_id", "space_id", "skill_id",
 	}).AddRow(
-		"task-r", "upload-r", "reup.zip", int64(1024), "skills/upload-r/reup.zip", "sha",
+		"task-r", "upload-r", "reup.zip", int64(1024), "skill-uploads/upload-r/reup.zip", "sha",
 		"success", "Name", "Desc", "1.0.0",
-		[]byte(`[]`), "readme", "user-1", "space-1", "existing-skill-id",
+		[]byte(`[]`), "readme",
+		"", "", nil,
+		"user-1", "space-1", "existing-skill-id",
 	)
 	mock.ExpectQuery("SELECT .+ FROM parse_tasks WHERE id").
 		WithArgs("task-r").
@@ -350,3 +353,19 @@ func containsSubstr(s, sub string) bool {
 
 // Ensure json import is used (for test data setup).
 var _ = json.RawMessage(`[]`)
+
+// makeTestZip creates a minimal zip file containing a SKILL.md for testing.
+func makeTestZip(t *testing.T) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	w := zip.NewWriter(&buf)
+	f, err := w.Create("SKILL.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = f.Write([]byte("---\nname: my-skill\ndescription: A test skill\nversion: 1.0.0\n---\n# My Skill\nContent"))
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}

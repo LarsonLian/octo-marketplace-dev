@@ -22,6 +22,10 @@ type Storage interface {
 	// time-limited signed URLs unsuitable for storing in a DB column.
 	PublicURL(ctx context.Context, key string) (string, error)
 
+	// PutObject uploads an object from an io.Reader directly (server-side).
+	// Used when the service itself produces content (e.g. rewritten zips).
+	PutObject(ctx context.Context, key string, reader io.Reader, size int64, contentType string) error
+
 	// GetObject retrieves an object from storage.
 	GetObject(ctx context.Context, key string) (io.ReadCloser, error)
 

@@ -1,10 +1,12 @@
 package skill
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"strings"
 	"time"
@@ -71,10 +73,11 @@ type SkillItem struct {
 
 	// Internal authorization and storage metadata. These fields are required
 	// by download handlers but must never be serialized in catalog responses.
-	OwnerID    string `json:"-"`
-	SpaceID    string `json:"-"`
-	FileURL    string `json:"-"`
-	FileSHA256 string `json:"-"`
+	OwnerID       string `json:"-"`
+	SpaceID       string `json:"-"`
+	FileURL       string `json:"-"`
+	FileSHA256    string `json:"-"`
+	SourceSkillID string `json:"-"`
 }
 
 // ListResult holds paginated skill items.
@@ -155,18 +158,19 @@ func (s *Service) Get(ctx context.Context, id, spaceID, userID string) (*SkillIt
 
 // CreateParams holds the request data for creating a skill.
 type CreateParams struct {
-	ParseTaskID string
-	Name        string
-	DisplayName string
-	IconURL     string
-	Description string
-	CategoryID  string
-	Tags        json.RawMessage
-	Visibility  string
-	Version     string
-	UserID      string
-	UserName    string
-	SpaceID     string
+	ParseTaskID   string
+	Name          string
+	DisplayName   string
+	IconURL       string
+	Description   string
+	CategoryID    string
+	Tags          json.RawMessage
+	Visibility    string
+	Version       string
+	UserID        string
+	UserName      string
+	SpaceID       string
+	SourceSkillID string // optional: explicit fork source
 }
 
 // Create creates a new skill from a completed parse task.
@@ -226,48 +230,115 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (*SkillItem, error
 	if err != nil {
 		return nil, ErrInvalidTags
 	}
-	readmeContent := ""
-	if pt.ResultReadme != nil {
-		readmeContent = mdsanitize.Sanitize(*pt.ResultReadme)
-	}
 
 	visibility := p.Visibility
 	if visibility == "" {
 		visibility = "space"
 	}
 
-	id := s.idGen()
+	skillID := s.idGen()
+	versionID := s.idGen()
 
-	// Compute final object key: skills/{skill_id}/v{version}/{file_name}
-	finalKey := fmt.Sprintf("skills/%s/v%s/%s", id, version, pt.FileName)
+	// Determine source_skill_id: API param > result_id from zip > empty
+	sourceSkillID := p.SourceSkillID
+	if sourceSkillID == "" {
+		sourceSkillID = pt.ResultID
+	}
 
-	// Relocate the file BEFORE committing the DB transaction.
-	// If copy fails, we don't consume the parse task — user can retry.
-	if pt.FileURL != finalKey {
-		if err := s.store.CopyObject(ctx, pt.FileURL, finalKey); err != nil {
-			return nil, fmt.Errorf("relocate uploaded file: %w", err)
-		}
+	// Determine tags list for frontmatter rewrite
+	var tagsList []string
+	_ = json.Unmarshal(tags, &tagsList)
+
+	// Parse raw metadata for preserving user vendor fields
+	var rawMetadata map[string]interface{}
+	if pt.ResultMetadata != nil {
+		_ = json.Unmarshal(pt.ResultMetadata, &rawMetadata)
+	}
+
+	// Download the temporary zip
+	rc, err := s.store.GetObject(ctx, pt.FileURL)
+	if err != nil {
+		return nil, fmt.Errorf("download temp zip: %w", err)
+	}
+	if rc == nil {
+		return nil, fmt.Errorf("download temp zip: object not found")
+	}
+	zipData, err := io.ReadAll(rc)
+	rc.Close()
+	if err != nil {
+		return nil, fmt.Errorf("read temp zip: %w", err)
+	}
+
+	// Rewrite the zip with injected frontmatter
+	rewriteResult, err := RewriteZipPackage(
+		bytes.NewReader(zipData), int64(len(zipData)),
+		RewriteParams{
+			Name:        name,
+			Desc:        description,
+			Version:     version,
+			Tags:        tagsList,
+			ID:          skillID,
+			ForkedFrom:  sourceSkillID,
+			RawMetadata: rawMetadata,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("rewrite zip: %w", err)
+	}
+
+	// Compute storage paths
+	zipKey := fmt.Sprintf("skills/%s/v%s/skill.zip", skillID, version)
+	mdKey := fmt.Sprintf("skills/%s/v%s/SKILL.md", skillID, version)
+
+	// Upload rewritten zip
+	if err := s.store.PutObject(ctx, zipKey, bytes.NewReader(rewriteResult.ZipBytes), rewriteResult.ZipSize, "application/zip"); err != nil {
+		return nil, fmt.Errorf("upload zip: %w", err)
+	}
+
+	// Upload SKILL.md separately
+	if err := s.store.PutObject(ctx, mdKey, bytes.NewReader(rewriteResult.SkillMD), int64(len(rewriteResult.SkillMD)), "text/markdown; charset=utf-8"); err != nil {
+		// best-effort cleanup
+		_ = s.store.DeleteObject(ctx, zipKey)
+		return nil, fmt.Errorf("upload skill.md: %w", err)
+	}
+
+	// Build VersionStorage JSON
+	vs := VersionStorage{
+		Type:             "s3",
+		ZipObjectKey:     zipKey,
+		SkillMdObjectKey: mdKey,
+		ZipFileName:      "skill.zip",
+		ZipSize:          rewriteResult.ZipSize,
+		ZipSHA256:        rewriteResult.ZipSHA256,
+	}
+
+	// Sanitize readme from the rewritten SKILL.md body for the legacy column
+	readmeContent := ""
+	if pt.ResultReadme != nil {
+		readmeContent = mdsanitize.Sanitize(*pt.ResultReadme)
 	}
 
 	row, err := s.repo.CreateSkillAndConsumeTask(ctx, p.ParseTaskID, skillrepo.CreateParams{
-		ID:            id,
-		Name:          name,
-		DisplayName:   p.DisplayName,
-		IconURL:       p.IconURL,
-		Description:   description,
-		CategoryID:    p.CategoryID,
-		Tags:          tags,
-		OwnerID:       p.UserID,
-		OwnerName:     p.UserName,
-		SpaceID:       p.SpaceID,
-		Visibility:    toVisibility(visibility),
-		Version:       version,
-		ReadmeContent: readmeContent,
-		FileName:      pt.FileName,
-		FileURL:       finalKey,
-		FileSize:      pt.FileSize,
-		FileSHA256:    pt.FileSHA256,
-		TagNames:      tagNames,
+		ID:               skillID,
+		Name:             name,
+		DisplayName:      p.DisplayName,
+		IconURL:          p.IconURL,
+		Description:      description,
+		CategoryID:       p.CategoryID,
+		Tags:             tags,
+		OwnerID:          p.UserID,
+		OwnerName:        p.UserName,
+		SpaceID:          p.SpaceID,
+		Visibility:       toVisibility(visibility),
+		Version:          version,
+		ReadmeContent:    readmeContent,
+		FileName:         "skill.zip",
+		FileURL:          zipKey,
+		FileSize:         rewriteResult.ZipSize,
+		FileSHA256:       rewriteResult.ZipSHA256,
+		SourceSkillID:    sourceSkillID,
+		CurrentVersionID: versionID,
+		TagNames:         tagNames,
 	})
 	if err != nil {
 		if errors.Is(err, skillrepo.ErrParseTaskAlreadyConsumed) {
@@ -276,20 +347,28 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (*SkillItem, error
 		if errors.Is(err, skillrepo.ErrNameTaken) {
 			return nil, ErrNameTaken
 		}
+		// best-effort cleanup objects on DB failure
+		_ = s.store.DeleteObject(ctx, zipKey)
+		_ = s.store.DeleteObject(ctx, mdKey)
 		return nil, err
 	}
 
 	// Record initial version in history
 	if verErr := s.repo.InsertVersion(ctx, model.SkillVersion{
-		ID:        s.idGen(),
-		SkillID:   id,
+		ID:        versionID,
+		SkillID:   skillID,
 		Version:   version,
 		Changelog: "初始发布",
-		Storage:   fmt.Sprintf(`{"type":"s3","object_key":%q}`, finalKey),
+		Storage:   vs.JSON(),
 		ChangedBy: p.UserID,
 	}); verErr != nil {
-		log.Printf("[skill] InsertVersion failed for skill %s: %v", id, verErr)
+		log.Printf("[skill] InsertVersion failed for skill %s: %v", skillID, verErr)
 	}
+
+	// best-effort async cleanup of temp zip
+	go func() {
+		_ = s.store.DeleteObject(context.Background(), pt.FileURL)
+	}()
 
 	item := s.rowToItem(ctx, row)
 	return &item, nil
@@ -371,6 +450,11 @@ func (s *Service) Update(ctx context.Context, id, userID, spaceID string, p Upda
 			return nil, ErrInvalidParseTask
 		}
 
+		// Reupload zip id validation: if zip has an id, it must match the skill
+		if pt.ResultID != "" && pt.ResultID != id {
+			return nil, ErrInvalidParseTask
+		}
+
 		// Determine version for final key
 		version := row.Version
 		if p.Version != nil {
@@ -379,21 +463,7 @@ func (s *Service) Update(ctx context.Context, id, userID, spaceID string, p Upda
 			version = pt.ResultVersion
 		}
 
-		// Compute final object key
-		finalKey := fmt.Sprintf("skills/%s/v%s/%s", id, version, pt.FileName)
-
-		// Apply file metadata from parse task
-		repoParams.FileName = &pt.FileName
-		repoParams.FileSize = &pt.FileSize
-		repoParams.FileSHA256 = &pt.FileSHA256
-		repoParams.FileURL = &finalKey
-
 		// Apply parsed content if not overridden in the request
-		if pt.ResultReadme != nil {
-			readme := mdsanitize.Sanitize(*pt.ResultReadme)
-			repoParams.ReadmeContent = &readme
-		}
-		// If name/description/version/tags not set in request, use parse results
 		if p.Name == nil && pt.ResultName != "" {
 			repoParams.Name = &pt.ResultName
 		}
@@ -412,13 +482,87 @@ func (s *Service) Update(ctx context.Context, id, userID, spaceID string, p Upda
 			repoParams.TagNames = tagNames
 		}
 
-		// Relocate file BEFORE committing the DB transaction.
-		// If copy fails, we don't consume the parse task — user can retry.
-		if pt.FileURL != finalKey {
-			if err := s.store.CopyObject(ctx, pt.FileURL, finalKey); err != nil {
-				return nil, fmt.Errorf("relocate uploaded file: %w", err)
-			}
+		// Determine final name/desc for rewrite
+		rewriteName := row.Name
+		if repoParams.Name != nil {
+			rewriteName = *repoParams.Name
 		}
+		rewriteDesc := row.Description
+		if repoParams.Description != nil {
+			rewriteDesc = *repoParams.Description
+		}
+		var rewriteTags []string
+		if repoParams.Tags != nil {
+			_ = json.Unmarshal(repoParams.Tags, &rewriteTags)
+		} else {
+			_ = json.Unmarshal(row.Tags, &rewriteTags)
+		}
+
+		// Parse raw metadata for preserving user vendor fields
+		var rawMetadata map[string]interface{}
+		if pt.ResultMetadata != nil {
+			_ = json.Unmarshal(pt.ResultMetadata, &rawMetadata)
+		}
+
+		// Download the temporary zip
+		rc, err := s.store.GetObject(ctx, pt.FileURL)
+		if err != nil {
+			return nil, fmt.Errorf("download temp zip: %w", err)
+		}
+		if rc == nil {
+			return nil, fmt.Errorf("download temp zip: object not found")
+		}
+		zipData, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			return nil, fmt.Errorf("read temp zip: %w", err)
+		}
+
+		// Rewrite the zip
+		rewriteResult, err := RewriteZipPackage(
+			bytes.NewReader(zipData), int64(len(zipData)),
+			RewriteParams{
+				Name:        rewriteName,
+				Desc:        rewriteDesc,
+				Version:     version,
+				Tags:        rewriteTags,
+				ID:          id,
+				ForkedFrom:  row.SourceSkillID,
+				RawMetadata: rawMetadata,
+			},
+		)
+		if err != nil {
+			return nil, fmt.Errorf("rewrite zip: %w", err)
+		}
+
+		// Compute storage paths
+		zipKey := fmt.Sprintf("skills/%s/v%s/skill.zip", id, version)
+		mdKey := fmt.Sprintf("skills/%s/v%s/SKILL.md", id, version)
+
+		// Upload
+		if err := s.store.PutObject(ctx, zipKey, bytes.NewReader(rewriteResult.ZipBytes), rewriteResult.ZipSize, "application/zip"); err != nil {
+			return nil, fmt.Errorf("upload zip: %w", err)
+		}
+		if err := s.store.PutObject(ctx, mdKey, bytes.NewReader(rewriteResult.SkillMD), int64(len(rewriteResult.SkillMD)), "text/markdown; charset=utf-8"); err != nil {
+			_ = s.store.DeleteObject(ctx, zipKey)
+			return nil, fmt.Errorf("upload skill.md: %w", err)
+		}
+
+		// Apply file metadata
+		fileName := "skill.zip"
+		repoParams.FileName = &fileName
+		repoParams.FileSize = &rewriteResult.ZipSize
+		repoParams.FileSHA256 = &rewriteResult.ZipSHA256
+		repoParams.FileURL = &zipKey
+
+		if pt.ResultReadme != nil {
+			readme := mdsanitize.Sanitize(*pt.ResultReadme)
+			repoParams.ReadmeContent = &readme
+		}
+
+		// Generate new version ID and set current_version_id
+		versionID := s.idGen()
+		repoParams.CurrentVersionID = &versionID
 
 		// Transactionally update skill and consume parse task
 		taskSkillID := pt.SkillID
@@ -433,20 +577,38 @@ func (s *Service) Update(ctx context.Context, id, userID, spaceID string, p Upda
 			if errors.Is(err, skillrepo.ErrNameTaken) {
 				return nil, ErrNameTaken
 			}
+			// best-effort cleanup
+			_ = s.store.DeleteObject(ctx, zipKey)
+			_ = s.store.DeleteObject(ctx, mdKey)
 			return nil, err
+		}
+
+		// Build VersionStorage
+		vs := VersionStorage{
+			Type:             "s3",
+			ZipObjectKey:     zipKey,
+			SkillMdObjectKey: mdKey,
+			ZipFileName:      "skill.zip",
+			ZipSize:          rewriteResult.ZipSize,
+			ZipSHA256:        rewriteResult.ZipSHA256,
 		}
 
 		// Record new version in history
 		if verErr := s.repo.InsertVersion(ctx, model.SkillVersion{
-			ID:        s.idGen(),
+			ID:        versionID,
 			SkillID:   id,
 			Version:   version,
 			Changelog: p.Changelog,
-			Storage:   fmt.Sprintf(`{"type":"s3","object_key":%q}`, finalKey),
+			Storage:   vs.JSON(),
 			ChangedBy: userID,
 		}); verErr != nil {
 			log.Printf("[skill] InsertVersion failed for skill %s v%s: %v", id, version, verErr)
 		}
+
+		// best-effort cleanup temp zip
+		go func() {
+			_ = s.store.DeleteObject(context.Background(), pt.FileURL)
+		}()
 
 		// Re-fetch to return updated data
 		updated, err := s.repo.GetByID(ctx, id)
@@ -554,6 +716,7 @@ func (s *Service) rowToItem(ctx context.Context, row *skillrepo.SkillRow) SkillI
 		FileURL:       row.FileURL,
 		FileSize:      row.FileSize,
 		FileSHA256:    row.FileSHA256,
+		SourceSkillID: row.SourceSkillID,
 		CreatedAt:     row.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
 		UpdatedAt:     row.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"),
 	}
@@ -570,6 +733,57 @@ func (s *Service) toListResult(ctx context.Context, r *skillrepo.ListResult) *Li
 // isURL returns true if the string looks like a full URL (not an object key).
 func isURL(s string) bool {
 	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
+}
+
+// GetSkillMD retrieves the SKILL.md content from object storage for a given skill.
+// Returns the raw markdown bytes. Returns ErrNotFound if the skill doesn't exist
+// or the user cannot view it, or if no skill_md_object_key is available.
+func (s *Service) GetSkillMD(ctx context.Context, id, spaceID, userID string) ([]byte, error) {
+	row, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if row == nil {
+		return nil, ErrNotFound
+	}
+	if !canView(row, spaceID, userID) {
+		return nil, ErrNotFound
+	}
+
+	// Get the current version's storage to find the SKILL.md key
+	if row.CurrentVersionID == "" {
+		return nil, ErrNotFound
+	}
+
+	versions, err := s.repo.ListVersions(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	var mdKey string
+	for _, v := range versions {
+		if v.ID == row.CurrentVersionID {
+			vs := ParseVersionStorage(v.Storage)
+			mdKey = vs.SkillMdObjectKey
+			break
+		}
+	}
+
+	if mdKey == "" {
+		return nil, ErrNotFound
+	}
+
+	rc, err := s.store.GetObject(ctx, mdKey)
+	if err != nil {
+		return nil, fmt.Errorf("get skill.md from storage: %w", err)
+	}
+	defer rc.Close()
+
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		return nil, fmt.Errorf("read skill.md: %w", err)
+	}
+	return data, nil
 }
 
 // VersionItem is the API-facing representation of a skill version.

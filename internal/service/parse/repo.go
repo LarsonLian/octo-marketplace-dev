@@ -23,6 +23,10 @@ type TaskRow struct {
 	ResultTags        json.RawMessage
 	ResultReadme      *string
 	FileSHA256        string
+	Attempts          int
+	ResultID          string
+	ResultForkedFrom  string
+	ResultMetadata    json.RawMessage
 	OwnerID           string
 	SpaceID           string
 	SkillID           string // empty for new upload, non-empty for reupload
@@ -59,22 +63,28 @@ func (r *Repo) GetByID(ctx context.Context, id string) (*TaskRow, error) {
 		SELECT id, upload_id, file_name, file_size, file_url, status,
 			error_code, error_message,
 			result_name, result_description, result_version, COALESCE(result_tags, '[]'), result_readme,
-			file_sha256, owner_id, space_id, skill_id, created_at, updated_at
+			file_sha256, attempts, result_id, result_forked_from, result_metadata,
+			owner_id, space_id, skill_id, created_at, updated_at
 		FROM parse_tasks
 		WHERE id = ?
 	`
 	var t TaskRow
+	var resultMetadata sql.NullString
 	err := r.db.QueryRowContext(ctx, query, id).Scan(
 		&t.ID, &t.UploadID, &t.FileName, &t.FileSize, &t.FileURL, &t.Status,
 		&t.ErrorCode, &t.ErrorMessage,
 		&t.ResultName, &t.ResultDescription, &t.ResultVersion, &t.ResultTags, &t.ResultReadme,
-		&t.FileSHA256, &t.OwnerID, &t.SpaceID, &t.SkillID, &t.CreatedAt, &t.UpdatedAt,
+		&t.FileSHA256, &t.Attempts, &t.ResultID, &t.ResultForkedFrom, &resultMetadata,
+		&t.OwnerID, &t.SpaceID, &t.SkillID, &t.CreatedAt, &t.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
+	}
+	if resultMetadata.Valid {
+		t.ResultMetadata = json.RawMessage(resultMetadata.String)
 	}
 	return &t, nil
 }
@@ -85,24 +95,30 @@ func (r *Repo) GetByUploadID(ctx context.Context, uploadID string) (*TaskRow, er
 		SELECT id, upload_id, file_name, file_size, file_url, status,
 			error_code, error_message,
 			result_name, result_description, result_version, COALESCE(result_tags, '[]'), result_readme,
-			file_sha256, owner_id, space_id, skill_id, created_at, updated_at
+			file_sha256, attempts, result_id, result_forked_from, result_metadata,
+			owner_id, space_id, skill_id, created_at, updated_at
 		FROM parse_tasks
 		WHERE upload_id = ?
 		ORDER BY created_at DESC
 		LIMIT 1
 	`
 	var t TaskRow
+	var resultMetadata sql.NullString
 	err := r.db.QueryRowContext(ctx, query, uploadID).Scan(
 		&t.ID, &t.UploadID, &t.FileName, &t.FileSize, &t.FileURL, &t.Status,
 		&t.ErrorCode, &t.ErrorMessage,
 		&t.ResultName, &t.ResultDescription, &t.ResultVersion, &t.ResultTags, &t.ResultReadme,
-		&t.FileSHA256, &t.OwnerID, &t.SpaceID, &t.SkillID, &t.CreatedAt, &t.UpdatedAt,
+		&t.FileSHA256, &t.Attempts, &t.ResultID, &t.ResultForkedFrom, &resultMetadata,
+		&t.OwnerID, &t.SpaceID, &t.SkillID, &t.CreatedAt, &t.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
+	}
+	if resultMetadata.Valid {
+		t.ResultMetadata = json.RawMessage(resultMetadata.String)
 	}
 	return &t, nil
 }
@@ -138,12 +154,14 @@ func (r *Repo) UpdateFailed(ctx context.Context, id, errorCode, errorMessage str
 }
 
 // UpdateSuccess sets the parse task to success with the parsed results.
-func (r *Repo) UpdateSuccess(ctx context.Context, id string, name string, description *string, version string, tags json.RawMessage, readme *string, sha256 string) error {
+func (r *Repo) UpdateSuccess(ctx context.Context, id string, name string, description *string, version string, tags json.RawMessage, readme *string, sha256 string, resultID, resultForkedFrom string, resultMetadata json.RawMessage) error {
 	_, err := r.db.ExecContext(ctx,
 		`UPDATE parse_tasks SET status = 'success',
 			result_name = ?, result_description = ?, result_version = ?,
-			result_tags = ?, result_readme = ?, file_sha256 = ?
+			result_tags = ?, result_readme = ?, file_sha256 = ?,
+			result_id = ?, result_forked_from = ?, result_metadata = ?
 		WHERE id = ?`,
-		name, description, version, tags, readme, sha256, id)
+		name, description, version, tags, readme, sha256,
+		resultID, resultForkedFrom, resultMetadata, id)
 	return err
 }

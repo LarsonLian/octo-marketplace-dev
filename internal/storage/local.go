@@ -140,6 +140,11 @@ func (s *LocalStorage) PublicURL(_ context.Context, key string) (string, error) 
 	return fmt.Sprintf("%s/api/v1/_storage/download/%s", s.baseURL, key), nil
 }
 
+// PutObject writes an object from an io.Reader directly (server-side upload).
+func (s *LocalStorage) PutObject(_ context.Context, key string, reader io.Reader, _ int64, _ string) error {
+	return s.WriteObject(key, reader)
+}
+
 // GetObject opens the local file for reading.
 func (s *LocalStorage) GetObject(_ context.Context, key string) (io.ReadCloser, error) {
 	full, err := s.safePath(key)
