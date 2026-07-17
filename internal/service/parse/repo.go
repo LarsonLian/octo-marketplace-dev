@@ -15,6 +15,7 @@ type TaskRow struct {
 	FileSize          int64
 	FileURL           string
 	Status            string
+	Attempts          int
 	ErrorCode         string
 	ErrorMessage      string
 	ResultName        string
@@ -56,7 +57,7 @@ func (r *Repo) Create(ctx context.Context, t *TaskRow) error {
 // GetByID fetches a parse task by ID.
 func (r *Repo) GetByID(ctx context.Context, id string) (*TaskRow, error) {
 	query := `
-		SELECT id, upload_id, file_name, file_size, file_url, status,
+		SELECT id, upload_id, file_name, file_size, file_url, status, attempts,
 			error_code, error_message,
 			result_name, result_description, result_version, COALESCE(result_tags, '[]'), result_readme,
 			file_sha256, owner_id, space_id, skill_id, created_at, updated_at
@@ -65,7 +66,7 @@ func (r *Repo) GetByID(ctx context.Context, id string) (*TaskRow, error) {
 	`
 	var t TaskRow
 	err := r.db.QueryRowContext(ctx, query, id).Scan(
-		&t.ID, &t.UploadID, &t.FileName, &t.FileSize, &t.FileURL, &t.Status,
+		&t.ID, &t.UploadID, &t.FileName, &t.FileSize, &t.FileURL, &t.Status, &t.Attempts,
 		&t.ErrorCode, &t.ErrorMessage,
 		&t.ResultName, &t.ResultDescription, &t.ResultVersion, &t.ResultTags, &t.ResultReadme,
 		&t.FileSHA256, &t.OwnerID, &t.SpaceID, &t.SkillID, &t.CreatedAt, &t.UpdatedAt,
@@ -82,7 +83,7 @@ func (r *Repo) GetByID(ctx context.Context, id string) (*TaskRow, error) {
 // GetByUploadID fetches a parse task by upload_id.
 func (r *Repo) GetByUploadID(ctx context.Context, uploadID string) (*TaskRow, error) {
 	query := `
-		SELECT id, upload_id, file_name, file_size, file_url, status,
+		SELECT id, upload_id, file_name, file_size, file_url, status, attempts,
 			error_code, error_message,
 			result_name, result_description, result_version, COALESCE(result_tags, '[]'), result_readme,
 			file_sha256, owner_id, space_id, skill_id, created_at, updated_at
@@ -93,7 +94,7 @@ func (r *Repo) GetByUploadID(ctx context.Context, uploadID string) (*TaskRow, er
 	`
 	var t TaskRow
 	err := r.db.QueryRowContext(ctx, query, uploadID).Scan(
-		&t.ID, &t.UploadID, &t.FileName, &t.FileSize, &t.FileURL, &t.Status,
+		&t.ID, &t.UploadID, &t.FileName, &t.FileSize, &t.FileURL, &t.Status, &t.Attempts,
 		&t.ErrorCode, &t.ErrorMessage,
 		&t.ResultName, &t.ResultDescription, &t.ResultVersion, &t.ResultTags, &t.ResultReadme,
 		&t.FileSHA256, &t.OwnerID, &t.SpaceID, &t.SkillID, &t.CreatedAt, &t.UpdatedAt,
@@ -145,5 +146,37 @@ func (r *Repo) UpdateSuccess(ctx context.Context, id string, name string, descri
 			result_tags = ?, result_readme = ?, file_sha256 = ?
 		WHERE id = ?`,
 		name, description, version, tags, readme, sha256, id)
+	return err
+}
+
+// TryRecoverStaleParsing atomically claims a stale parsing task for re-submission.
+// It increments attempts and updates updated_at only if the task is still in
+// 'parsing' status, its updated_at is older than staleTimeout, and attempts < maxAttempts.
+// Returns true if this caller won the race (affected rows == 1).
+func (r *Repo) TryRecoverStaleParsing(ctx context.Context, id string, staleSeconds int, maxAttempts int) (bool, error) {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE parse_tasks
+		 SET updated_at = NOW(), attempts = attempts + 1
+		 WHERE id = ? AND status = 'parsing'
+		   AND updated_at < NOW() - INTERVAL ? SECOND
+		   AND attempts < ?`,
+		id, staleSeconds, maxAttempts)
+	if err != nil {
+		return false, err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rows == 1, nil
+}
+
+// MarkRetryExhausted marks a task as failed because recovery attempts were exhausted.
+func (r *Repo) MarkRetryExhausted(ctx context.Context, id string) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE parse_tasks SET status = 'failed', error_code = 'PARSE_RETRY_EXHAUSTED',
+		 error_message = '解析任务多次超时，请重新上传'
+		 WHERE id = ? AND status = 'parsing'`,
+		id)
 	return err
 }

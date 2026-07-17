@@ -125,7 +125,12 @@ func main() {
 			OSSSigningHost:     cfg.OSSSigningHost,
 			OSSDownloadSigned:  cfg.OSSDownloadSigned,
 			CORSAllowedOrigins: cfg.CORSAllowedOrigins,
-		}, mcpHandler, adminMCPHandler),
+		}, mcpHandler, adminMCPHandler, router.ParseConfig{
+			ParseTimeout:   cfg.SkillParseTimeout,
+			StaleTimeout:   cfg.SkillParseStaleTimeout,
+			MaxAttempts:    cfg.SkillParseMaxAttempts,
+			WorkerPoolSize: cfg.SkillParseWorkerPoolSize,
+		}),
 		ReadHeaderTimeout: cfg.ReadHeaderTimeout,
 		ReadTimeout:       cfg.ReadTimeout,
 		WriteTimeout:      cfg.WriteTimeout,
