@@ -27,7 +27,7 @@ Environment variables configure the API service.
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
-| `STORAGE_DRIVER` | no | `local` | Storage backend: `local` (filesystem) or `oss` (Alibaba Cloud OSS / S3-compatible) |
+| `STORAGE_DRIVER` | no | `local` | Storage backend: `local` (filesystem, **single-Pod only**) or `oss` (Alibaba Cloud OSS / S3-compatible). ⚠️ `local` stores files on the Pod's filesystem and is **not shared across replicas** — use it only for local development or single-Pod deployments. Production multi-Pod deployments **must** use `oss` with a shared object store (OSS/S3/COS). |
 | `LOCAL_STORAGE_DIR` | no | `/tmp/marketplace-uploads` | Local filesystem directory (when STORAGE_DRIVER=local) |
 | `MAX_UPLOAD_MB` | no | `20` | Maximum upload file size in megabytes |
 | `OSS_ENDPOINT` | when oss | — | Canonical S3-compatible API endpoint used for signing and server-side operations |
@@ -56,6 +56,22 @@ OSS_PUBLIC_ENDPOINT=https://cdn.example.com
 OSS_SIGNING_HOST=example-bucket.cos.ap-beijing.myqcloud.com
 OSS_DOWNLOAD_SIGNED=false
 ```
+
+## Parse Worker Settings
+
+Configuration for the asynchronous skill zip parsing worker and the Poll Lazy
+Recovery mechanism that self-heals stuck tasks in multi-Pod deployments.
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `SKILL_PARSE_TIMEOUT` | no | `1m` | Maximum execution time for a single parse worker run |
+| `SKILL_PARSE_STALE_TIMEOUT` | no | `5m` | Duration after which a `parsing` task with no `updated_at` progress is considered stuck and eligible for recovery. **Must be greater than `SKILL_PARSE_TIMEOUT`** — startup fails if this constraint is violated |
+| `SKILL_PARSE_MAX_ATTEMPTS` | no | `2` | Maximum number of recovery retries before marking the task as permanently failed (`PARSE_RETRY_EXHAUSTED`) |
+| `SKILL_PARSE_WORKER_POOL_SIZE` | no | `10` | Maximum concurrent parse goroutines per Pod |
+
+**Constraint:** `SKILL_PARSE_STALE_TIMEOUT > SKILL_PARSE_TIMEOUT` — the service
+panics at startup if this invariant is not met, to prevent premature task
+reclamation while a legitimate parse is still running.
 
 Example:
 
