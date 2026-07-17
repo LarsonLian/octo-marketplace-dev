@@ -153,6 +153,11 @@ func (s *LocalStorage) GetObject(_ context.Context, key string) (io.ReadCloser, 
 	return f, nil
 }
 
+// PutObject writes data from a reader to the local filesystem.
+func (s *LocalStorage) PutObject(_ context.Context, key string, reader io.Reader, _ int64, _ string) error {
+	return s.WriteObject(key, reader)
+}
+
 // DeleteObject removes the file from disk.
 func (s *LocalStorage) DeleteObject(_ context.Context, key string) error {
 	full, err := s.safePath(key)

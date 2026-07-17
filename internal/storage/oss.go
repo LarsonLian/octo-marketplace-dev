@@ -141,6 +141,24 @@ func (s *OSSStorage) GetObject(ctx context.Context, key string) (io.ReadCloser, 
 	return output.Body, nil
 }
 
+// PutObject uploads an object to storage from a reader.
+func (s *OSSStorage) PutObject(ctx context.Context, key string, reader io.Reader, size int64, contentType string) error {
+	input := &s3.PutObjectInput{
+		Bucket:        aws.String(s.bucket),
+		Key:           aws.String(s.key(key)),
+		Body:          reader,
+		ContentLength: aws.Int64(size),
+	}
+	if contentType != "" {
+		input.ContentType = aws.String(contentType)
+	}
+	_, err := s.client.PutObject(ctx, input)
+	if err != nil {
+		return fmt.Errorf("oss put object: %w", err)
+	}
+	return nil
+}
+
 // DeleteObject removes an object from storage.
 func (s *OSSStorage) DeleteObject(ctx context.Context, key string) error {
 	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{

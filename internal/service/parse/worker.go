@@ -153,8 +153,16 @@ func (w *Worker) process(taskID, objectKey string, maxZipBytes int64) {
 		readmePtr = &readme
 	}
 
+	// Marshal metadata from frontmatter
+	resultID := sanitizeString(fm.ID, 36)
+	forkedFrom := sanitizeString(fm.ForkedFrom, 36)
+	var metadataJSON json.RawMessage
+	if fm.Metadata != nil {
+		metadataJSON, _ = json.Marshal(fm.Metadata)
+	}
+
 	// 6. Update task as success
-	w.updateSuccess(taskID, name, descPtr, version, tags, readmePtr, sha)
+	w.updateSuccess(taskID, name, descPtr, version, tags, readmePtr, sha, resultID, forkedFrom, metadataJSON)
 }
 
 func (w *Worker) downloadToFile(ctx context.Context, key, dst string, maxBytes int64) error {
@@ -203,10 +211,10 @@ func (w *Worker) updateFailed(taskID, errorCode, errorMessage string) {
 	_ = w.repo.UpdateFailed(ctx, taskID, errorCode, publicParseErrorMessage(errorCode))
 }
 
-func (w *Worker) updateSuccess(taskID string, name string, description *string, version string, tags json.RawMessage, readme *string, sha256 string) {
+func (w *Worker) updateSuccess(taskID string, name string, description *string, version string, tags json.RawMessage, readme *string, sha256 string, resultID string, forkedFrom string, metadata json.RawMessage) {
 	ctx, cancel := context.WithTimeout(context.Background(), statusUpdateTimeout)
 	defer cancel()
-	if err := w.repo.UpdateSuccess(ctx, taskID, name, description, version, tags, readme, sha256); err != nil {
+	if err := w.repo.UpdateSuccess(ctx, taskID, name, description, version, tags, readme, sha256, resultID, forkedFrom, metadata); err != nil {
 		log.Printf("[parse-worker] update success failed for task %s: %v", taskID, err)
 	}
 }

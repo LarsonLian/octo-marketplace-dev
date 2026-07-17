@@ -68,6 +68,10 @@ func (blockingStorage) CopyObject(context.Context, string, string) error {
 	return nil
 }
 
+func (blockingStorage) PutObject(context.Context, string, io.Reader, int64, string) error {
+	return nil
+}
+
 var _ storage.Storage = (*blockingStorage)(nil)
 
 type panicStorage struct{}
@@ -96,6 +100,10 @@ func (panicStorage) CopyObject(context.Context, string, string) error {
 	return nil
 }
 
+func (panicStorage) PutObject(context.Context, string, io.Reader, int64, string) error {
+	return nil
+}
+
 type zipStorage struct {
 	data []byte
 }
@@ -121,6 +129,10 @@ func (s zipStorage) DeleteObject(context.Context, string) error {
 }
 
 func (s zipStorage) CopyObject(context.Context, string, string) error {
+	return nil
+}
+
+func (s zipStorage) PutObject(context.Context, string, io.Reader, int64, string) error {
 	return nil
 }
 
@@ -205,11 +217,13 @@ func TestWorkerSanitizesReadmeBeforePersisting(t *testing.T) {
 		"id", "upload_id", "file_name", "file_size", "file_url", "status",
 		"error_code", "error_message",
 		"result_name", "result_description", "result_version", "result_tags", "result_readme",
-		"file_sha256", "owner_id", "space_id", "skill_id", "created_at", "updated_at",
+		"result_id", "result_forked_from", "result_metadata",
+		"file_sha256", "attempts", "owner_id", "space_id", "skill_id", "created_at", "updated_at",
 	}).AddRow(
 		"task-1", "upload-1", "skill.zip", int64(len(zipData)), "skills/upload-1/skill.zip", "parsing",
 		"", "", "", nil, "", []byte("[]"), nil,
-		"", "user-1", "space-1", "", now, now,
+		"", "", nil,
+		"", 0, "user-1", "space-1", "", now, now,
 	)
 
 	mock.ExpectQuery("SELECT id, upload_id, file_name, file_size, file_url, status,").
@@ -226,6 +240,9 @@ func TestWorkerSanitizesReadmeBeforePersisting(t *testing.T) {
 			sqlmock.AnyArg(),
 			stringArg("# Safe Skill\n\n&lt;div onclick=&#34;evil()&#34;&gt;hello&lt;/div&gt;\n\n```html\n<script>keep()</script>\n```"),
 			sqlmock.AnyArg(),
+			"",              // result_id
+			"",              // result_forked_from
+			sqlmock.AnyArg(), // result_metadata (nil json)
 			"task-1",
 		).
 		WillReturnResult(sqlmock.NewResult(0, 1))

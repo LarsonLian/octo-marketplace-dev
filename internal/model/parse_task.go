@@ -17,19 +17,23 @@ const (
 
 // ParseTask represents an asynchronous skill file parsing job.
 type ParseTask struct {
-	ID                string          `json:"id"`
-	UploadID          string          `json:"upload_id"`
-	FileURL           string          `json:"file_url"`
-	Status            ParseStatus     `json:"status"`
-	ErrorCode         string          `json:"error_code"`
-	ErrorMessage      string          `json:"error_message"`
-	ResultName        string          `json:"result_name"`
-	ResultDescription *string         `json:"result_description"`
-	ResultVersion     string          `json:"result_version"`
-	ResultTags        json.RawMessage `json:"result_tags"`
-	ResultReadme      *string         `json:"result_readme"`
-	OwnerID           string          `json:"owner_id"`
-	SpaceID           string          `json:"space_id"`
-	CreatedAt         time.Time       `json:"created_at"`
-	UpdatedAt         time.Time       `json:"updated_at"`
+	ID                string                 `json:"id"`
+	UploadID          string                 `json:"upload_id"`
+	FileURL           string                 `json:"file_url"`
+	Status            ParseStatus            `json:"status"`
+	ErrorCode         string                 `json:"error_code"`
+	ErrorMessage      string                 `json:"error_message"`
+	ResultName        string                 `json:"result_name"`
+	ResultDescription *string                `json:"result_description"`
+	ResultVersion     string                 `json:"result_version"`
+	ResultTags        json.RawMessage        `json:"result_tags"`
+	ResultReadme      *string                `json:"result_readme"`
+	ResultID          string                 `json:"result_id"`
+	ResultForkedFrom  string                 `json:"result_forked_from"`
+	ResultMetadata    map[string]interface{} `json:"result_metadata"`
+	Attempts          int                    `json:"attempts"`
+	OwnerID           string                 `json:"owner_id"`
+	SpaceID           string                 `json:"space_id"`
+	CreatedAt         time.Time              `json:"created_at"`
+	UpdatedAt         time.Time              `json:"updated_at"`
 }

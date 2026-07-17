@@ -20,6 +20,10 @@ type ParseTaskRow struct {
 	ResultVersion     string
 	ResultTags        json.RawMessage
 	ResultReadme      *string
+	ResultID          string
+	ResultForkedFrom  string
+	ResultMetadata    json.RawMessage
+	Attempts          int
 	OwnerID           string
 	SpaceID           string
 	SkillID           string
@@ -30,21 +34,28 @@ func (r *Repo) GetParseTask(ctx context.Context, id string) (*ParseTaskRow, erro
 	query := `
 		SELECT id, upload_id, file_name, file_size, file_url, file_sha256, status,
 			result_name, result_description, result_version, result_tags, result_readme,
+			result_id, result_forked_from, result_metadata, attempts,
 			owner_id, space_id, skill_id
 		FROM parse_tasks
 		WHERE id = ?
 	`
 	var pt ParseTaskRow
+	var resultMetadata sql.NullString
 	err := r.db.QueryRowContext(ctx, query, id).Scan(
 		&pt.ID, &pt.UploadID, &pt.FileName, &pt.FileSize, &pt.FileURL, &pt.FileSHA256,
 		&pt.Status, &pt.ResultName, &pt.ResultDescription, &pt.ResultVersion,
-		&pt.ResultTags, &pt.ResultReadme, &pt.OwnerID, &pt.SpaceID, &pt.SkillID,
+		&pt.ResultTags, &pt.ResultReadme,
+		&pt.ResultID, &pt.ResultForkedFrom, &resultMetadata, &pt.Attempts,
+		&pt.OwnerID, &pt.SpaceID, &pt.SkillID,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
+	}
+	if resultMetadata.Valid {
+		pt.ResultMetadata = json.RawMessage(resultMetadata.String)
 	}
 	return &pt, nil
 }

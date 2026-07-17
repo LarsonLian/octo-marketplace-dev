@@ -10,10 +10,13 @@ import (
 
 // FrontmatterResult holds the parsed frontmatter metadata from SKILL.md.
 type FrontmatterResult struct {
-	Name        string   `yaml:"name"`
-	Description string   `yaml:"description"`
-	Version     string   `yaml:"version"`
-	Tags        []string `yaml:"tags"`
+	Name        string                 `yaml:"name"`
+	Description string                 `yaml:"description"`
+	Version     string                 `yaml:"version"`
+	Tags        []string               `yaml:"tags"`
+	ID          string                 `yaml:"id"`
+	ForkedFrom  string                 `yaml:"forked_from"`
+	Metadata    map[string]interface{} `yaml:"metadata"`
 }
 
 // ParseFrontmatter extracts YAML frontmatter from a Markdown file.

@@ -40,6 +40,9 @@ func (f *fakeStorage) GetObject(_ context.Context, _ string) (io.ReadCloser, err
 	return nil, nil
 }
 func (f *fakeStorage) DeleteObject(_ context.Context, _ string) error { return nil }
+func (f *fakeStorage) PutObject(_ context.Context, _ string, _ io.Reader, _ int64, _ string) error {
+	return nil
+}
 func (f *fakeStorage) CopyObject(_ context.Context, src, dst string) error {
 	f.copyCount++
 	f.copySrc = src
@@ -65,11 +68,13 @@ func TestCreate_CopyObjectFailure_NoDBMutation(t *testing.T) {
 	parseRows := sqlmock.NewRows([]string{
 		"id", "upload_id", "file_name", "file_size", "file_url", "file_sha256",
 		"status", "result_name", "result_description", "result_version",
-		"result_tags", "result_readme", "owner_id", "space_id", "skill_id",
+		"result_tags", "result_readme", "result_id", "result_forked_from", "result_metadata", "attempts",
+		"owner_id", "space_id", "skill_id",
 	}).AddRow(
 		"task-1", "upload-1", "skill.zip", int64(1024), "skills/upload-1/skill.zip", "sha256abc",
 		"success", "My Skill", "A description", "1.0.0",
-		[]byte(`["tag1"]`), "# My Skill\nContent", "user-1", "space-1", "",
+		[]byte(`["tag1"]`), "# My Skill\nContent", "", "", nil, 0,
+		"user-1", "space-1", "",
 	)
 	mock.ExpectQuery("SELECT .+ FROM parse_tasks WHERE id").
 		WithArgs("task-1").
@@ -123,11 +128,13 @@ func TestCreate_CopyObjectSuccess_DBMutationOccurs(t *testing.T) {
 	parseRows := sqlmock.NewRows([]string{
 		"id", "upload_id", "file_name", "file_size", "file_url", "file_sha256",
 		"status", "result_name", "result_description", "result_version",
-		"result_tags", "result_readme", "owner_id", "space_id", "skill_id",
+		"result_tags", "result_readme", "result_id", "result_forked_from", "result_metadata", "attempts",
+		"owner_id", "space_id", "skill_id",
 	}).AddRow(
 		"task-1", "upload-1", "skill.zip", int64(1024), "skills/upload-1/skill.zip", "sha256abc",
 		"success", "My Skill", "A description", "1.0.0",
-		[]byte(`["tag1"]`), "# My Skill\nContent", "user-1", "space-1", "",
+		[]byte(`["tag1"]`), "# My Skill\nContent", "", "", nil, 0,
+		"user-1", "space-1", "",
 	)
 	mock.ExpectQuery("SELECT .+ FROM parse_tasks WHERE id").
 		WithArgs("task-1").
@@ -200,11 +207,13 @@ func TestUpdate_CopyObjectFailure_NoDBMutation(t *testing.T) {
 
 	// Mock GetByID — returns an existing skill
 	skillRows := sqlmock.NewRows([]string{
-		"id", "name", "display_name", "icon_url", "description", "category_id", "tags", "owner_id", "owner_name",
+		"id", "name", "display_name", "icon_url", "source_skill_id", "current_version_id",
+		"description", "category_id", "tags", "owner_id", "owner_name",
 		"space_id", "visibility", "version", "readme_content", "file_name", "file_url",
 		"file_size", "file_sha256", "created_at", "updated_at",
 	}).AddRow(
-		"skill-1", "Old Skill", "Old Skill", "", "desc", "cat-1", []byte(`[]`), "user-1", "User One",
+		"skill-1", "Old Skill", "Old Skill", "", "", "",
+		"desc", "cat-1", []byte(`[]`), "user-1", "User One",
 		"space-1", "space", "1.0.0", "old readme", "old.zip", "skills/skill-1/v1.0.0/old.zip",
 		int64(512), "oldsha", time.Now(), time.Now(),
 	)
@@ -216,11 +225,13 @@ func TestUpdate_CopyObjectFailure_NoDBMutation(t *testing.T) {
 	parseRows := sqlmock.NewRows([]string{
 		"id", "upload_id", "file_name", "file_size", "file_url", "file_sha256",
 		"status", "result_name", "result_description", "result_version",
-		"result_tags", "result_readme", "owner_id", "space_id", "skill_id",
+		"result_tags", "result_readme", "result_id", "result_forked_from", "result_metadata", "attempts",
+		"owner_id", "space_id", "skill_id",
 	}).AddRow(
 		"task-2", "upload-2", "new-skill.zip", int64(2048), "skills/upload-2/new-skill.zip", "newsha",
 		"success", "New Skill", "New desc", "2.0.0",
-		[]byte(`["new"]`), "# New\nContent", "user-1", "space-1", "skill-1",
+		[]byte(`["new"]`), "# New\nContent", "", "", nil, 0,
+		"user-1", "space-1", "skill-1",
 	)
 	mock.ExpectQuery("SELECT .+ FROM parse_tasks WHERE id").
 		WithArgs("task-2").
@@ -268,11 +279,13 @@ func TestCreate_RejectsReuploadTask(t *testing.T) {
 	parseRows := sqlmock.NewRows([]string{
 		"id", "upload_id", "file_name", "file_size", "file_url", "file_sha256",
 		"status", "result_name", "result_description", "result_version",
-		"result_tags", "result_readme", "owner_id", "space_id", "skill_id",
+		"result_tags", "result_readme", "result_id", "result_forked_from", "result_metadata", "attempts",
+		"owner_id", "space_id", "skill_id",
 	}).AddRow(
 		"task-r", "upload-r", "reup.zip", int64(1024), "skills/upload-r/reup.zip", "sha",
 		"success", "Name", "Desc", "1.0.0",
-		[]byte(`[]`), "readme", "user-1", "space-1", "existing-skill-id",
+		[]byte(`[]`), "readme", "", "", nil, 0,
+		"user-1", "space-1", "existing-skill-id",
 	)
 	mock.ExpectQuery("SELECT .+ FROM parse_tasks WHERE id").
 		WithArgs("task-r").
