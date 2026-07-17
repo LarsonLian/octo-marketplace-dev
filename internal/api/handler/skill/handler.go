@@ -10,6 +10,7 @@ import (
 	apiresponse "github.com/Mininglamp-OSS/octo-marketplace/internal/api/response"
 	"github.com/Mininglamp-OSS/octo-marketplace/internal/middleware"
 	"github.com/Mininglamp-OSS/octo-marketplace/internal/model"
+	skillrepo "github.com/Mininglamp-OSS/octo-marketplace/internal/repository/skill"
 	skillsvc "github.com/Mininglamp-OSS/octo-marketplace/internal/service/skill"
 	"github.com/gin-gonic/gin"
 )
@@ -58,9 +59,17 @@ func (h *Handler) Register(rg *gin.RouterGroup) {
 	legacy.DELETE("/:skill_id", h.Delete)
 }
 
+// validSortModes is the whitelist of allowed sort values.
+var validSortModes = map[string]bool{
+	skillrepo.SortComprehensive: true,
+	skillrepo.SortLatest:        true,
+	skillrepo.SortDownloads:     true,
+	skillrepo.SortViews:         true,
+}
+
 // List godoc
 // @Summary List skills
-// @Description List skills visible in the current Space using cursor pagination.
+// @Description List skills visible in the current Space with sort and pagination.
 // @Tags skill
 // @ID skill.list
 // @Accept json
@@ -70,9 +79,12 @@ func (h *Handler) Register(rg *gin.RouterGroup) {
 // @Param category_id query string false "Category ID"
 // @Param tags query string false "Comma-separated tag names; all tags must match"
 // @Param tag query []string false "Repeated tag names; all tags must match"
-// @Param cursor query string false "Cursor for next page"
+// @Param sort query string false "Sort mode: comprehensive (default), latest, downloads, views"
+// @Param cursor query string false "Cursor for next page (latest sort only)"
+// @Param offset query int false "Offset for pagination (comprehensive/downloads/views)"
 // @Param page_size query int false "Page size, default 20, max 50"
 // @Success 200 {object} apiresponse.CursorList[SkillResponse]
+// @Failure 400 {object} apiresponse.Error "VALIDATION_ERROR"
 // @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
 // @Failure 403 {object} apiresponse.Error "FORBIDDEN"
 // @Failure 404 {object} apiresponse.Error "NOT_FOUND"
@@ -87,6 +99,17 @@ func (h *Handler) List(c *gin.Context) {
 	spaceID := middleware.SpaceID(c)
 	limit := parseLimit(pageSizeQuery(c))
 
+	sort := c.Query("sort")
+	if sort == "" {
+		sort = skillrepo.SortComprehensive
+	}
+	if !validSortModes[sort] {
+		apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "invalid sort parameter, must be one of: comprehensive, latest, downloads, views", nil, "")
+		return
+	}
+
+	offset := parseOffset(c.Query("offset"))
+
 	result, err := h.svc.List(c.Request.Context(), skillsvc.ListParams{
 		SpaceID:    spaceID,
 		UserID:     identity.UID,
@@ -95,14 +118,26 @@ func (h *Handler) List(c *gin.Context) {
 		Tags:       tagFilters(c),
 		Cursor:     c.Query("cursor"),
 		Limit:      limit,
+		Offset:     offset,
+		Sort:       sort,
 	})
 	if err != nil {
 		apiresponse.Fail(c, http.StatusInternalServerError, errcode.InternalError, "internal error", nil, "")
 		return
 	}
 
-	nextCursor := cursorValue(result.NextCursor)
-	apiresponse.Cursor(c, result.Items, nextCursor != "", nextCursor)
+	if sort == skillrepo.SortLatest {
+		// Cursor-based pagination for latest sort
+		nextCursor := cursorValue(result.NextCursor)
+		apiresponse.Cursor(c, result.Items, nextCursor != "", nextCursor)
+	} else {
+		// Offset-based pagination for comprehensive/downloads/views
+		page := 1
+		if limit > 0 {
+			page = offset/limit + 1
+		}
+		apiresponse.Offset(c, result.Items, result.Total, page, limit)
+	}
 }
 
 // ListMine godoc
@@ -545,6 +580,17 @@ func parseLimit(s string) int {
 	}
 	if n > 50 {
 		return 50
+	}
+	return n
+}
+
+func parseOffset(s string) int {
+	if s == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 0 {
+		return 0
 	}
 	return n
 }

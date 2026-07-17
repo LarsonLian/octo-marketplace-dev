@@ -150,15 +150,18 @@ func publicWithOptions(database Pinger, authenticator *marketmiddleware.Authenti
 		skillhandler.New(skSvc).Register(v1)
 
 		// Wire up metrics service and handler.
-		var metricsRedisClient *metricsredis.Client
+		var mSvc *metricssvc.Service
 		if redisCfg.URL != "" {
 			opts, err := goredis.ParseURL(redisCfg.URL)
 			if err == nil {
 				rdb := goredis.NewClient(opts)
-				metricsRedisClient = metricsredis.NewClient(rdb)
+				metricsRedisClient := metricsredis.NewClient(rdb)
+				mSvc = metricssvc.New(metricsRedisClient)
 			}
 		}
-		mSvc := metricssvc.New(metricsRedisClient)
+		if mSvc == nil {
+			mSvc = metricssvc.New(nil)
+		}
 		metricssvc.RegisterResolver("skill", metricssvc.NewSkillResolver(skSvc))
 		metricshandler.New(mSvc).Register(v1)
 
@@ -173,6 +176,7 @@ func publicWithOptions(database Pinger, authenticator *marketmiddleware.Authenti
 		})
 
 		uploadH := uploadhandler.New(pSvc, skSvc, localStorage, storageCfg.MaxMB)
+		uploadH.SetMetricsService(mSvc)
 		uploadH.Register(v1)
 		uploadH.RegisterLocalProxy(r, authEnabled)
 

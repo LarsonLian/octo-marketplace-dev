@@ -8,6 +8,7 @@ import (
 	"github.com/Mininglamp-OSS/octo-marketplace/internal/api/errcode"
 	apiresponse "github.com/Mininglamp-OSS/octo-marketplace/internal/api/response"
 	"github.com/Mininglamp-OSS/octo-marketplace/internal/middleware"
+	metricssvc "github.com/Mininglamp-OSS/octo-marketplace/internal/service/metrics"
 	"github.com/Mininglamp-OSS/octo-marketplace/internal/service/parse"
 	skillsvc "github.com/Mininglamp-OSS/octo-marketplace/internal/service/skill"
 	"github.com/Mininglamp-OSS/octo-marketplace/internal/storage"
@@ -18,6 +19,7 @@ import (
 type Handler struct {
 	parseSvc     *parse.Service
 	skillSvc     *skillsvc.Service
+	metricsSvc   *metricssvc.Service
 	localStorage *storage.LocalStorage // nil when not using local storage
 	maxUploadMB  int
 }
@@ -34,6 +36,11 @@ func New(parseSvc *parse.Service, skillSvc *skillsvc.Service, localStorage *stor
 		localStorage: localStorage,
 		maxUploadMB:  maxMB,
 	}
+}
+
+// SetMetricsService sets the metrics service for download tracking.
+func (h *Handler) SetMetricsService(svc *metricssvc.Service) {
+	h.metricsSvc = svc
 }
 
 // Register registers upload/parse/download routes.
@@ -373,6 +380,13 @@ func (h *Handler) Download(c *gin.Context) {
 		}
 		apiresponse.Fail(c, http.StatusInternalServerError, errcode.InternalError, "internal error", nil, "")
 		return
+	}
+
+	// Track download after successful URL generation — fire-and-forget.
+	if h.metricsSvc != nil {
+		if trackErr := h.metricsSvc.TrackDownload(c.Request.Context(), "skill", skillID); trackErr != nil {
+			log.Printf("[download] WARN: TrackDownload failed for skill %s: %v", skillID, trackErr)
+		}
 	}
 
 	if c.Query("format") == "json" {
