@@ -125,7 +125,7 @@ func main() {
 			OSSSigningHost:     cfg.OSSSigningHost,
 			OSSDownloadSigned:  cfg.OSSDownloadSigned,
 			CORSAllowedOrigins: cfg.CORSAllowedOrigins,
-		}, mcpHandler, adminMCPHandler),
+		}, mcpHandler, adminMCPHandler, router.RedisConfig{URL: cfg.RedisURL}),
 		ReadHeaderTimeout: cfg.ReadHeaderTimeout,
 		ReadTimeout:       cfg.ReadTimeout,
 		WriteTimeout:      cfg.WriteTimeout,

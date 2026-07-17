@@ -36,6 +36,10 @@ type Config struct {
 	IdleTimeout       time.Duration
 	ProbeAllowPrivate bool
 
+	// Redis URL for metrics tracking (e.g. "redis://localhost:6379/0").
+	// Empty disables Redis-backed metrics (counters silently no-op).
+	RedisURL string
+
 	// Object storage for MCP icons (S3-compatible). Independent of the skill
 	// archive storage below.
 	Storage StorageConfig
@@ -96,6 +100,7 @@ func Load() Config {
 		WriteTimeout:       envDuration("HTTP_WRITE_TIMEOUT", 30*time.Second),
 		IdleTimeout:        envDuration("HTTP_IDLE_TIMEOUT", 60*time.Second),
 		ProbeAllowPrivate:  envBool("PROBE_ALLOW_PRIVATE", false),
+		RedisURL:           env("REDIS_URL", ""),
 		Storage: StorageConfig{
 			Endpoint:      strings.TrimRight(env("STORAGE_ENDPOINT", ""), "/"),
 			Region:        env("STORAGE_REGION", "us-east-1"),

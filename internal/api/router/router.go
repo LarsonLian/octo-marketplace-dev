@@ -9,17 +9,21 @@ import (
 
 	"github.com/Mininglamp-OSS/octo-marketplace/internal/api/handler"
 	categoryhandler "github.com/Mininglamp-OSS/octo-marketplace/internal/api/handler/category"
+	metricshandler "github.com/Mininglamp-OSS/octo-marketplace/internal/api/handler/metrics"
 	skillhandler "github.com/Mininglamp-OSS/octo-marketplace/internal/api/handler/skill"
 	uploadhandler "github.com/Mininglamp-OSS/octo-marketplace/internal/api/handler/upload"
 	marketmiddleware "github.com/Mininglamp-OSS/octo-marketplace/internal/middleware"
 	"github.com/Mininglamp-OSS/octo-marketplace/internal/model"
+	metricsredis "github.com/Mininglamp-OSS/octo-marketplace/internal/redis"
 	categoryrepo "github.com/Mininglamp-OSS/octo-marketplace/internal/repository/category"
 	skillrepo "github.com/Mininglamp-OSS/octo-marketplace/internal/repository/skill"
 	categorysvc "github.com/Mininglamp-OSS/octo-marketplace/internal/service/category"
+	metricssvc "github.com/Mininglamp-OSS/octo-marketplace/internal/service/metrics"
 	parsesvc "github.com/Mininglamp-OSS/octo-marketplace/internal/service/parse"
 	skillsvc "github.com/Mininglamp-OSS/octo-marketplace/internal/service/skill"
 	"github.com/Mininglamp-OSS/octo-marketplace/internal/storage"
 	"github.com/gin-gonic/gin"
+	goredis "github.com/redis/go-redis/v9"
 )
 
 type Pinger interface {
@@ -45,11 +49,20 @@ type StorageConfig struct {
 	CORSAllowedOrigins []string
 }
 
-func Public(database Pinger, authenticator *marketmiddleware.Authenticator, adminAuth *marketmiddleware.AdminAuthenticator, storageCfg StorageConfig, mcp *handler.MCP, adminMCP *handler.AdminMCP) *gin.Engine {
-	return publicWithOptions(database, authenticator, adminAuth, storageCfg, mcp, adminMCP, authenticator.AuthEnabled())
+// RedisConfig holds configuration for the Redis connection used by metrics.
+type RedisConfig struct {
+	URL string // e.g. "redis://localhost:6379/0"
 }
 
-func publicWithOptions(database Pinger, authenticator *marketmiddleware.Authenticator, adminAuth *marketmiddleware.AdminAuthenticator, storageCfg StorageConfig, mcp *handler.MCP, adminMCP *handler.AdminMCP, authEnabled bool) *gin.Engine {
+func Public(database Pinger, authenticator *marketmiddleware.Authenticator, adminAuth *marketmiddleware.AdminAuthenticator, storageCfg StorageConfig, mcp *handler.MCP, adminMCP *handler.AdminMCP, redisCfg ...RedisConfig) *gin.Engine {
+	var rc RedisConfig
+	if len(redisCfg) > 0 {
+		rc = redisCfg[0]
+	}
+	return publicWithOptions(database, authenticator, adminAuth, storageCfg, mcp, adminMCP, authenticator.AuthEnabled(), rc)
+}
+
+func publicWithOptions(database Pinger, authenticator *marketmiddleware.Authenticator, adminAuth *marketmiddleware.AdminAuthenticator, storageCfg StorageConfig, mcp *handler.MCP, adminMCP *handler.AdminMCP, authEnabled bool, redisCfg RedisConfig) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery(), corsMiddleware(storageCfg.CORSAllowedOrigins))
 
@@ -125,6 +138,19 @@ func publicWithOptions(database Pinger, authenticator *marketmiddleware.Authenti
 		catH.Register(v1)
 		catH.RegisterAdmin(r, adminAuth, generateID)
 		skillhandler.New(skSvc).Register(v1)
+
+		// Wire up metrics service and handler.
+		var metricsRedisClient *metricsredis.Client
+		if redisCfg.URL != "" {
+			opts, err := goredis.ParseURL(redisCfg.URL)
+			if err == nil {
+				rdb := goredis.NewClient(opts)
+				metricsRedisClient = metricsredis.NewClient(rdb)
+			}
+		}
+		mSvc := metricssvc.New(metricsRedisClient)
+		metricssvc.RegisterResolver("skill", metricssvc.NewSkillResolver(skSvc))
+		metricshandler.New(mSvc).Register(v1)
 
 		parseRepo := parsesvc.NewRepo(db)
 		worker := parsesvc.NewWorker(store, parseRepo, db)
@@ -247,5 +273,5 @@ func PublicWithDBAndAuth(db *sql.DB, authenticator *marketmiddleware.Authenticat
 		adminToken = "sekret"
 	}
 	adminAuth := marketmiddleware.NewAdminAuthenticator(authEnabled, adminToken, model.Identity{})
-	return publicWithOptions(db, authenticator, adminAuth, storageCfg, nil, nil, authEnabled)
+	return publicWithOptions(db, authenticator, adminAuth, storageCfg, nil, nil, authEnabled, RedisConfig{})
 }
