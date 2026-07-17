@@ -223,5 +223,3 @@ make openapi-check
 - [Configuration reference](CONFIGURATION.md)
 - [MCP API contract](docs/api/mcp-v1.md)
 - [Generated OpenAPI contract](docs/openapi/swagger.yaml)
-- [Install a Skill with Octo CLI](docs/octo-cli-skill-install.md)
-- [Skill install prompt contract](docs/skill-install-prompt.md)
