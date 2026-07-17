@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -147,7 +148,7 @@ func TestTrack_ResourceNotVisible(t *testing.T) {
 }
 
 func TestTrack_RedisFailure_Still204(t *testing.T) {
-	r := setupTestRouter(nil) // Redis error only logged in service, not returned
+	r := setupTestRouter(errors.New("redis down"))
 	defer metricssvc.ResetResolvers()
 
 	w := doTrack(r, map[string]string{
