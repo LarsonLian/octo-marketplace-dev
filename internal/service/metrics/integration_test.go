@@ -457,6 +457,101 @@ func TestIntegration_LargeBatch(t *testing.T) {
 	}
 }
 
+// TestIntegration_DBFail_DeltaLost_BestEffort documents the best-effort semantics:
+// when DB upsert fails after GETSET has already cleared the Redis counter, the
+// delta for that batch is LOST. SADD back to dirty only ensures future new traffic
+// is retried — the original delta cannot be recovered. This is the explicit v1
+// design choice per DEV-29 v5 contract ("DB 持续失败可能丢当前批次，不假装可恢复").
+func TestIntegration_DBFail_DeltaLost_BestEffort(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
+
+	// Repo that always fails
+	repo := &mockRepo{failN: 999}
+
+	cfg := DefaultFlushWorkerConfig()
+	fw := NewFlushWorker(rdb, repo, cfg)
+	ctx := context.Background()
+
+	// Track 10 views
+	mr.Set("metrics:skill:sk-lost:view", "10")
+	mr.SAdd("metrics:dirty", "skill:sk-lost")
+
+	// First flush: DB fails after GETSET clears the counter
+	fw.flush(ctx)
+
+	// Verify: DB got no successful writes
+	if len(repo.calls) != 0 {
+		t.Fatalf("expected 0 successful upserts, got %d", len(repo.calls))
+	}
+
+	// Verify: Redis counter was already reset to "0" by GETSET
+	v, _ := mr.Get("metrics:skill:sk-lost:view")
+	if v != "0" {
+		t.Fatalf("expected Redis counter reset to 0 by GETSET, got %q", v)
+	}
+
+	// Verify: dirty member was SADD back (for future new traffic)
+	isMember, _ := mr.IsMember("metrics:dirty", "skill:sk-lost")
+	if !isMember {
+		t.Fatal("expected dirty member to be SADD back after DB failure")
+	}
+
+	// Now fix the DB and flush again — the original 10 views are GONE
+	repo2 := &mockRepo{}
+	fw2 := NewFlushWorker(rdb, repo2, cfg)
+	fw2.flush(ctx)
+
+	// The second flush reads 0 from Redis (GETSET already cleared it)
+	// so it either skips or writes 0 — the original delta=10 is unrecoverable
+	for _, call := range repo2.calls {
+		if call.ResourceID == "sk-lost" && call.ViewDelta > 0 {
+			t.Fatalf("expected lost delta to be unrecoverable, but got viewDelta=%d", call.ViewDelta)
+		}
+	}
+
+	// This confirms best-effort semantics: delta is lost when DB fails after GETSET
+}
+
+// TestIntegration_DBFail_NewTrafficStillCaptured verifies that even though the
+// original batch delta is lost after DB failure, NEW traffic arriving after the
+// failure is still captured correctly on the next flush cycle.
+func TestIntegration_DBFail_NewTrafficStillCaptured(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
+
+	// Repo that fails first 3 retries (all)
+	repo := &mockRepo{failN: 3}
+
+	cfg := DefaultFlushWorkerConfig()
+	fw := NewFlushWorker(rdb, repo, cfg)
+	ctx := context.Background()
+
+	// Original traffic: 5 views
+	mr.Set("metrics:skill:sk-new:view", "5")
+	mr.SAdd("metrics:dirty", "skill:sk-new")
+
+	// First flush: DB fails → original 5 views lost
+	fw.flush(ctx)
+
+	// New traffic arrives: 3 more views
+	rdb.IncrBy(ctx, "metrics:skill:sk-new:view", 3)
+	// dirty member is already SADD'd back from the failure
+
+	// Second flush with working DB
+	repo2 := &mockRepo{}
+	fw2 := NewFlushWorker(rdb, repo2, cfg)
+	fw2.flush(ctx)
+
+	// Should capture the NEW 3 views (not the original 5)
+	if len(repo2.calls) != 1 {
+		t.Fatalf("expected 1 upsert for new traffic, got %d", len(repo2.calls))
+	}
+	if repo2.calls[0].ViewDelta != 3 {
+		t.Errorf("expected new traffic viewDelta=3, got %d (original 5 is lost)", repo2.calls[0].ViewDelta)
+	}
+}
+
 func safeViewDelta(calls []upsertCall, idx int) int64 {
 	if idx >= len(calls) {
 		return -1

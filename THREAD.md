@@ -142,6 +142,7 @@ GET /api/v1/skills/{id}/download 成功
 - flush 周期内数据有 30-60s 延迟
 - `download_count` 是下载 URL 生成次数（下载意图），不是 CDN 真实文件下载次数
 - v1 不接入 MCP（后续加 resolver 和触发点即可）
+- best-effort 丢失：DB 持续失败或进程崩溃时，已 GETSET 清零的 delta 不可恢复（不做 WAL）
 
 ---
 
@@ -149,7 +150,13 @@ GET /api/v1/skills/{id}/download 成功
 
 | 风险 | 影响 | 缓解 |
 |------|------|------|
-| flush 进程崩溃丢失当前批次 | 丢失一个 flush 周期的增量（30s） | best-effort 设计，日志告警 |
-| Redis 持续不可用 | 所有计数停止积累 | 主流程不受影响；恢复后从 dirty set 继续 |
-| MySQL 持续失败 | dirty set 持续增长 | 重试 + SADD 回写 + 告警 |
+| flush 进程崩溃（GETSET 后、DB 写入前） | 已 GETSET 清零的当前批次 delta **不可恢复**，丢失最多一个 flush 周期的增量（30s） | best-effort 设计，日志告警；计数场景可接受短期不一致 |
+| Redis 持续不可用 | 所有计数停止积累（INCR/SADD 失败） | 主流程不受影响；Redis 恢复后新流量正常累积 |
+| MySQL/DB 持续失败 | 已 GETSET 的当前批次 delta **丢失**（GETSET 已将 Redis counter 清零，DB 写入失败后 delta 无法恢复）；SADD 只保留 dirty member 以便后续**新增流量**有重试机会，但本批 delta 不假装可恢复 | 进程内重试 3 次（间隔 100ms）；最终失败打 error log + metrics_flush_db_fail_total；dirty_set_size 连续增长告警提示运维介入 |
 | 并发极高时 SPOP 竞争 | 理论上安全（SPOP 原子操作） | 已测试 batch 处理 |
+
+> **关于 best-effort 丢失语义**（与 DEV-29 v5 方案契约一致）：
+> Flush 使用 `GETSET key "0"` 原子取值并清零。如果后续 DB upsert 最终失败（重试耗尽），
+> 该批 delta 不可恢复——这是 v1 的显式设计选择，不做 WAL/补偿。
+> `SADD` 回写 dirty member 的作用仅是：确保该 resource 后续的**新增流量**仍会被 flush
+> 发现并处理，而非恢复已丢失的 delta。
