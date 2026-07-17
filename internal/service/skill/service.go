@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"strings"
 	"time"
 
@@ -339,6 +338,13 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (*SkillItem, error
 		SourceSkillID:    sourceSkillID,
 		CurrentVersionID: versionID,
 		TagNames:         tagNames,
+	}, model.SkillVersion{
+		ID:        versionID,
+		SkillID:   skillID,
+		Version:   version,
+		Changelog: "初始发布",
+		Storage:   vs.JSON(),
+		ChangedBy: p.UserID,
 	})
 	if err != nil {
 		if errors.Is(err, skillrepo.ErrParseTaskAlreadyConsumed) {
@@ -351,18 +357,6 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (*SkillItem, error
 		_ = s.store.DeleteObject(ctx, zipKey)
 		_ = s.store.DeleteObject(ctx, mdKey)
 		return nil, err
-	}
-
-	// Record initial version in history
-	if verErr := s.repo.InsertVersion(ctx, model.SkillVersion{
-		ID:        versionID,
-		SkillID:   skillID,
-		Version:   version,
-		Changelog: "初始发布",
-		Storage:   vs.JSON(),
-		ChangedBy: p.UserID,
-	}); verErr != nil {
-		log.Printf("[skill] InsertVersion failed for skill %s: %v", skillID, verErr)
 	}
 
 	// best-effort async cleanup of temp zip
@@ -564,12 +558,29 @@ func (s *Service) Update(ctx context.Context, id, userID, spaceID string, p Upda
 		versionID := s.idGen()
 		repoParams.CurrentVersionID = &versionID
 
-		// Transactionally update skill and consume parse task
+		// Build VersionStorage
+		vs := VersionStorage{
+			Type:             "s3",
+			ZipObjectKey:     zipKey,
+			SkillMdObjectKey: mdKey,
+			ZipFileName:      "skill.zip",
+			ZipSize:          rewriteResult.ZipSize,
+			ZipSHA256:        rewriteResult.ZipSHA256,
+		}
+
+		// Transactionally update skill, insert version, and consume parse task
 		taskSkillID := pt.SkillID
 		if taskSkillID == "" {
 			taskSkillID = id // for tasks not explicitly linked
 		}
-		err = s.repo.UpdateSkillAndConsumeTask(ctx, id, repoParams, p.ParseTaskID, userID, spaceID, taskSkillID)
+		err = s.repo.UpdateSkillAndConsumeTask(ctx, id, repoParams, p.ParseTaskID, userID, spaceID, taskSkillID, model.SkillVersion{
+			ID:        versionID,
+			SkillID:   id,
+			Version:   version,
+			Changelog: p.Changelog,
+			Storage:   vs.JSON(),
+			ChangedBy: userID,
+		})
 		if err != nil {
 			if errors.Is(err, skillrepo.ErrParseTaskAlreadyConsumed) {
 				return nil, ErrParseTaskConsumed
@@ -581,28 +592,6 @@ func (s *Service) Update(ctx context.Context, id, userID, spaceID string, p Upda
 			_ = s.store.DeleteObject(ctx, zipKey)
 			_ = s.store.DeleteObject(ctx, mdKey)
 			return nil, err
-		}
-
-		// Build VersionStorage
-		vs := VersionStorage{
-			Type:             "s3",
-			ZipObjectKey:     zipKey,
-			SkillMdObjectKey: mdKey,
-			ZipFileName:      "skill.zip",
-			ZipSize:          rewriteResult.ZipSize,
-			ZipSHA256:        rewriteResult.ZipSHA256,
-		}
-
-		// Record new version in history
-		if verErr := s.repo.InsertVersion(ctx, model.SkillVersion{
-			ID:        versionID,
-			SkillID:   id,
-			Version:   version,
-			Changelog: p.Changelog,
-			Storage:   vs.JSON(),
-			ChangedBy: userID,
-		}); verErr != nil {
-			log.Printf("[skill] InsertVersion failed for skill %s v%s: %v", id, version, verErr)
 		}
 
 		// best-effort cleanup temp zip

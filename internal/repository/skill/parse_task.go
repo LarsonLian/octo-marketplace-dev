@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+
+	"github.com/Mininglamp-OSS/octo-marketplace/internal/model"
 )
 
 // ParseTaskRow holds parse_task data needed for skill creation.
@@ -81,9 +83,9 @@ func (r *Repo) MarkParseTaskConsumed(ctx context.Context, id, ownerID, spaceID, 
 	return nil
 }
 
-// UpdateSkillAndConsumeTask updates a skill and marks the parse task as consumed
-// within a single transaction, preventing duplicate reupload consumption.
-func (r *Repo) UpdateSkillAndConsumeTask(ctx context.Context, skillID string, p UpdateParams, parseTaskID, ownerID, spaceID, taskSkillID string) error {
+// UpdateSkillAndConsumeTask updates a skill, inserts its new version, and marks
+// the parse task as consumed within a single transaction.
+func (r *Repo) UpdateSkillAndConsumeTask(ctx context.Context, skillID string, p UpdateParams, parseTaskID, ownerID, spaceID, taskSkillID string, v model.SkillVersion) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -117,6 +119,17 @@ func (r *Repo) UpdateSkillAndConsumeTask(ctx context.Context, skillID string, p 
 	if _, err := tx.ExecContext(ctx, query, args...); err != nil {
 		return mapDuplicateName(err)
 	}
+
+	// Insert the new version record within the same transaction
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO skill_versions (id, skill_id, version, changelog, storage, changed_by)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		v.ID, v.SkillID, v.Version, v.Changelog, v.Storage, v.ChangedBy,
+	)
+	if err != nil {
+		return err
+	}
+
 	if err := upsertTags(ctx, tx, spaceID, ownerID, p.TagNames); err != nil {
 		return err
 	}

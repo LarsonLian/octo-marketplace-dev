@@ -149,14 +149,12 @@ func TestCreate_CopyObjectSuccess_DBMutationOccurs(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("INSERT INTO skills").
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO skill_versions").
+		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("INSERT INTO skill_tags").
 		WithArgs("space-1", "tag1", "user-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
-
-	// Expect InsertVersion (called after transaction commits; logged on failure)
-	mock.ExpectExec("INSERT INTO skill_versions").
-		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	ctx := context.Background()
 	item, createErr := svc.Create(ctx, CreateParams{
@@ -204,12 +202,12 @@ func TestUpdate_CopyObjectFailure_NoDBMutation(t *testing.T) {
 		"id", "name", "display_name", "icon_url", "source_skill_id", "current_version_id",
 		"description", "category_id", "tags", "owner_id", "owner_name",
 		"space_id", "visibility", "version", "readme_content", "file_name", "file_url",
-		"file_size", "file_sha256", "created_at", "updated_at",
+		"file_size", "file_sha256", "created_at", "updated_at", "storage",
 	}).AddRow(
 		"skill-1", "Old Skill", "Old Skill", "", "", "ver-1",
 		"desc", "cat-1", []byte(`[]`), "user-1", "User One",
 		"space-1", "space", "1.0.0", "old readme", "old.zip", "skills/skill-1/v1.0.0/old.zip",
-		int64(512), "oldsha", time.Now(), time.Now(),
+		int64(512), "oldsha", time.Now(), time.Now(), nil,
 	)
 	mock.ExpectQuery("SELECT .+ FROM skills").
 		WithArgs("skill-1").

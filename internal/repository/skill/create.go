@@ -89,9 +89,9 @@ func (r *Repo) Create(ctx context.Context, p CreateParams) (*SkillRow, error) {
 	}, nil
 }
 
-// CreateSkillAndConsumeTask creates a skill and marks the parse task as consumed
-// within a single transaction, preventing duplicate skill creation.
-func (r *Repo) CreateSkillAndConsumeTask(ctx context.Context, parseTaskID string, p CreateParams) (*SkillRow, error) {
+// CreateSkillAndConsumeTask creates a skill, inserts its initial version, and
+// marks the parse task as consumed — all within a single transaction.
+func (r *Repo) CreateSkillAndConsumeTask(ctx context.Context, parseTaskID string, p CreateParams, v model.SkillVersion) (*SkillRow, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -132,6 +132,17 @@ func (r *Repo) CreateSkillAndConsumeTask(ctx context.Context, parseTaskID string
 	if err != nil {
 		return nil, mapDuplicateName(err)
 	}
+
+	// Insert the version record within the same transaction
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO skill_versions (id, skill_id, version, changelog, storage, changed_by)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		v.ID, v.SkillID, v.Version, v.Changelog, v.Storage, v.ChangedBy,
+	)
+	if err != nil {
+		return nil, err
+	}
+
 	if err := upsertTags(ctx, tx, p.SpaceID, p.OwnerID, p.TagNames); err != nil {
 		return nil, err
 	}

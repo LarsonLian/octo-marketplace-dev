@@ -41,6 +41,7 @@ type SkillRow struct {
 	FileURL          string
 	FileSize         int64
 	FileSHA256       string
+	StorageJSON      string // raw JSON from skill_versions.storage (populated by GetByID)
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
 }
@@ -118,10 +119,12 @@ func (r *Repo) List(ctx context.Context, f ListFilter) (*ListResult, error) {
 	query := fmt.Sprintf(`
 		SELECT s.id, s.name, s.display_name, s.icon_url, s.source_skill_id, s.current_version_id,
 			s.description, s.category_id, s.tags,
-			s.owner_id, s.owner_name, s.space_id, s.visibility, s.version,
+			s.owner_id, s.owner_name, s.space_id, s.visibility,
+			COALESCE(v.version, s.version),
 			s.readme_content, s.file_name, s.file_url, s.file_size, s.file_sha256,
 			s.created_at, s.updated_at
 		FROM skills s
+		LEFT JOIN skill_versions v ON v.id = s.current_version_id
 		%s
 		ORDER BY s.created_at DESC, s.id DESC
 		LIMIT ?

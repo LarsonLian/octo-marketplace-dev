@@ -73,15 +73,34 @@ func parseBody(t *testing.T, w *httptest.ResponseRecorder) map[string]interface{
 	return result
 }
 
-var skillCols = []string{"id", "name", "display_name", "icon_url", "source_skill_id", "current_version_id",
+// listSkillCols is for List queries (no v.storage column)
+var listSkillCols = []string{"id", "name", "display_name", "icon_url", "source_skill_id", "current_version_id",
 	"description", "category_id", "tags",
 	"owner_id", "owner_name", "space_id", "visibility", "version",
 	"readme_content", "file_name", "file_url", "file_size", "file_sha256",
 	"created_at", "updated_at"}
 
+// skillCols is for GetByID queries (includes v.storage from JOIN)
+var skillCols = []string{"id", "name", "display_name", "icon_url", "source_skill_id", "current_version_id",
+	"description", "category_id", "tags",
+	"owner_id", "owner_name", "space_id", "visibility", "version",
+	"readme_content", "file_name", "file_url", "file_size", "file_sha256",
+	"created_at", "updated_at", "storage"}
+
 func skillRow(id, name, ownerID, ownerName, spaceID, visibility string) *sqlmock.Rows {
 	now := time.Now().UTC()
 	return sqlmock.NewRows(skillCols).AddRow(
+		id, name, name, "", "", "",
+		"description", "cat-1", []byte(`[]`),
+		ownerID, ownerName, spaceID, visibility, "1.0.0",
+		"readme", "file.zip", fmt.Sprintf("skills/%s/v1.0.0/file.zip", id), int64(1024), "sha256",
+		now, now, nil,
+	)
+}
+
+func listSkillRow(id, name, ownerID, ownerName, spaceID, visibility string) *sqlmock.Rows {
+	now := time.Now().UTC()
+	return sqlmock.NewRows(listSkillCols).AddRow(
 		id, name, name, "", "", "",
 		"description", "cat-1", []byte(`[]`),
 		ownerID, ownerName, spaceID, visibility, "1.0.0",
@@ -384,7 +403,7 @@ func TestUpdateSkillOwner(t *testing.T) {
 			"new desc", "cat-1", []byte(`["updated"]`),
 			"user-1", "Alice", "space-1", "space", "1.0.0",
 			"readme", "file.zip", "skills/skill-8/v1.0.0/file.zip", int64(1024), "sha256",
-			now, now,
+			now, now, nil,
 		))
 
 	w := doRequest(engine, "PUT", "/api/v1/skill/skill-8", map[string]interface{}{
@@ -405,7 +424,7 @@ func TestListSkills(t *testing.T) {
 
 	now := time.Now().UTC()
 	mock.ExpectQuery("SELECT .+ FROM skills").
-		WillReturnRows(sqlmock.NewRows(skillCols).
+		WillReturnRows(sqlmock.NewRows(listSkillCols).
 			AddRow("s1", "Skill 1", "Skill 1", "", "", "",
 				"desc1", "cat-1", []byte(`[]`),
 				"user-1", "Alice", "space-1", "space", "1.0.0",
@@ -432,7 +451,7 @@ func TestListSkillsWithCategoryFilter(t *testing.T) {
 	defer db.Close()
 
 	mock.ExpectQuery("SELECT .+ FROM skills").
-		WillReturnRows(skillRow("s1", "Filtered", "user-1", "Alice", "space-1", "space"))
+		WillReturnRows(listSkillRow("s1", "Filtered", "user-1", "Alice", "space-1", "space"))
 
 	w := doRequest(engine, "GET", "/api/v1/skill?category_id=cat-1", nil)
 
@@ -446,7 +465,7 @@ func TestListSkillsSearch(t *testing.T) {
 	defer db.Close()
 
 	mock.ExpectQuery("SELECT .+ FROM skills").
-		WillReturnRows(sqlmock.NewRows(skillCols))
+		WillReturnRows(sqlmock.NewRows(listSkillCols))
 
 	w := doRequest(engine, "GET", "/api/v1/skill?q=test", nil)
 
@@ -460,7 +479,7 @@ func TestListMine(t *testing.T) {
 	defer db.Close()
 
 	mock.ExpectQuery("SELECT .+ FROM skills").
-		WillReturnRows(skillRow("s1", "My Skill", "user-1", "Alice", "space-1", "private"))
+		WillReturnRows(listSkillRow("s1", "My Skill", "user-1", "Alice", "space-1", "private"))
 
 	w := doRequest(engine, "GET", "/api/v1/skill/mine", nil)
 
@@ -612,7 +631,7 @@ func TestDownloadSkillRedirect(t *testing.T) {
 			"desc", "cat-1", []byte(`[]`),
 			"user-1", "Alice", "space-1", "space", "1.0.0",
 			"", "file.zip", fileKey, int64(1024), "sha",
-			now, now,
+			now, now, nil,
 		))
 
 	w := doRequest(engine, "GET", "/api/v1/skill/skill-dl/download", nil)
@@ -651,7 +670,7 @@ func TestDownloadSkillJSON(t *testing.T) {
 			"skill-dl-json", "Download Skill", "Download Skill", "", "", "",
 			"desc", "cat-1", []byte(`[]`),
 			"user-1", "Alice", "space-1", "space", "1.0.0",
-			"", "file.zip", fileKey, int64(1024), "sha", now, now,
+			"", "file.zip", fileKey, int64(1024), "sha", now, now, nil,
 		))
 
 	w := doRequest(engine, "GET", "/api/v1/skills/skill-dl-json/download?format=json", nil)

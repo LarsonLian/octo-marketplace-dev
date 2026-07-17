@@ -155,7 +155,19 @@ func (w *Worker) process(taskID, objectKey string, maxZipBytes int64) {
 
 	// 6. Prepare extended frontmatter fields
 	resultID := sanitizeString(fm.ID, 36)
+	if resultID != "" {
+		if errMsg := validateUUID(resultID); errMsg != "" {
+			w.updateFailed(taskID, "INVALID_SKILL_MD", "frontmatter id 格式非法："+errMsg)
+			return
+		}
+	}
 	resultForkedFrom := sanitizeString(fm.ForkedFrom, 36)
+	if resultForkedFrom != "" {
+		if errMsg := validateUUID(resultForkedFrom); errMsg != "" {
+			w.updateFailed(taskID, "INVALID_SKILL_MD", "frontmatter forked_from 格式非法："+errMsg)
+			return
+		}
+	}
 	var resultMetadata json.RawMessage
 	if fm.RawMetadata != nil {
 		if b, err := json.Marshal(fm.RawMetadata); err == nil {
@@ -320,4 +332,24 @@ func (w *Worker) checkNameDuplicate(ctx context.Context, name, spaceID, ownerID,
 		return "内部错误：无法验证名称唯一性"
 	}
 	return fmt.Sprintf("skill name \"%s\" 已存在（ID: %s），请使用其他名称", name, existingID)
+}
+
+// validateUUID checks if a string is a valid UUID v4 format (8-4-4-4-12 hex).
+// Returns empty string if valid, error message otherwise.
+func validateUUID(s string) string {
+	if len(s) != 36 {
+		return fmt.Sprintf("长度应为 36（当前 %d）", len(s))
+	}
+	for i, c := range s {
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			if c != '-' {
+				return fmt.Sprintf("位置 %d 应为连字符", i)
+			}
+			continue
+		}
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return fmt.Sprintf("位置 %d 包含非法字符 '%c'", i, c)
+		}
+	}
+	return ""
 }
