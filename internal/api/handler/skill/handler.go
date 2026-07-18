@@ -189,15 +189,16 @@ func (h *Handler) Get(c *gin.Context) {
 
 // createRequest is the JSON body for POST /api/v1/skill.
 type CreateRequest struct {
-	ParseTaskID string          `json:"parse_task_id" binding:"required"`
-	Name        string          `json:"name"`
-	DisplayName string          `json:"display_name"`
-	IconURL     string          `json:"icon_url"`
-	Description string          `json:"description"`
-	CategoryID  string          `json:"category_id"`
-	Tags        json.RawMessage `json:"tags"`
-	Visibility  string          `json:"visibility"`
-	Version     string          `json:"version"`
+	ParseTaskID   string          `json:"parse_task_id" binding:"required"`
+	Name          string          `json:"name"`
+	DisplayName   string          `json:"display_name"`
+	IconURL       string          `json:"icon_url"`
+	Description   string          `json:"description"`
+	CategoryID    string          `json:"category_id"`
+	Tags          json.RawMessage `json:"tags"`
+	Visibility    string          `json:"visibility"`
+	Version       string          `json:"version"`
+	SourceSkillID string          `json:"source_skill_id"` // optional: explicit fork source UUID
 }
 
 // Create godoc
@@ -231,19 +232,26 @@ func (h *Handler) Create(c *gin.Context) {
 		return
 	}
 
+	// Validate optional source_skill_id as UUID if provided
+	if req.SourceSkillID != "" && !isValidUUID(req.SourceSkillID) {
+		apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "source_skill_id must be a valid UUID", nil, "")
+		return
+	}
+
 	item, err := h.svc.Create(c.Request.Context(), skillsvc.CreateParams{
-		ParseTaskID: req.ParseTaskID,
-		Name:        req.Name,
-		DisplayName: req.DisplayName,
-		IconURL:     req.IconURL,
-		Description: req.Description,
-		CategoryID:  req.CategoryID,
-		Tags:        req.Tags,
-		Visibility:  req.Visibility,
-		Version:     req.Version,
-		UserID:      identity.UID,
-		UserName:    identity.Name,
-		SpaceID:     spaceID,
+		ParseTaskID:   req.ParseTaskID,
+		Name:          req.Name,
+		DisplayName:   req.DisplayName,
+		IconURL:       req.IconURL,
+		Description:   req.Description,
+		CategoryID:    req.CategoryID,
+		Tags:          req.Tags,
+		Visibility:    req.Visibility,
+		Version:       req.Version,
+		UserID:        identity.UID,
+		UserName:      identity.Name,
+		SpaceID:       spaceID,
+		SourceSkillID: req.SourceSkillID,
 	})
 	if err != nil {
 		if errors.Is(err, skillsvc.ErrInvalidParseTask) {
@@ -522,6 +530,25 @@ func tagFilters(c *gin.Context) []string {
 	values := append([]string{}, c.QueryArray("tags")...)
 	values = append(values, c.QueryArray("tag")...)
 	return skillsvc.ParseTagFilters(values...)
+}
+
+// isValidUUID checks if s is a valid 8-4-4-4-12 hex UUID.
+func isValidUUID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i, c := range s {
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			if c != '-' {
+				return false
+			}
+			continue
+		}
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
 
 // GetSkillMD godoc

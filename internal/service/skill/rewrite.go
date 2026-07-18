@@ -21,8 +21,9 @@ type RewriteParams struct {
 	Tags       []string
 	ID         string // skill UUID to inject
 	ForkedFrom string // source skill UUID
-	// RawMetadata is the original YAML map from the uploaded SKILL.md.
-	// User vendor fields (anything not in the known set) are preserved.
+	// RawMetadata is unused in the current implementation. The rewriter now
+	// parses the original SKILL.md frontmatter directly and preserves all
+	// fields not in the machine-controlled set. Kept for API compatibility.
 	RawMetadata map[string]interface{}
 }
 
@@ -115,21 +116,19 @@ func isRootSkillMD(name string) bool {
 }
 
 // buildRewrittenSkillMD constructs the new SKILL.md content with updated frontmatter.
+// Preserves all original frontmatter fields and only overwrites the machine-controlled
+// fields: name, description, version, tags, id, forked_from.
 func buildRewrittenSkillMD(original []byte, p RewriteParams) []byte {
-	// Parse original to get the body
-	_, body := splitFrontmatterAndBody(original)
+	// Parse original frontmatter and body
+	fmYAML, body := splitFrontmatterAndBody(original)
 
-	// Build the new frontmatter map, preserving user vendor fields
+	// Start from original frontmatter to preserve all user/vendor fields
 	fm := make(map[string]interface{})
-
-	// Start with raw metadata (user vendor fields) if available
-	if p.RawMetadata != nil {
-		for k, v := range p.RawMetadata {
-			fm[k] = v
-		}
+	if fmYAML != "" {
+		_ = yaml.Unmarshal([]byte(fmYAML), &fm)
 	}
 
-	// Overwrite business fields
+	// Overwrite only the machine-controlled business fields
 	fm["name"] = p.Name
 	fm["description"] = p.Desc
 	fm["version"] = p.Version
@@ -146,9 +145,6 @@ func buildRewrittenSkillMD(original []byte, p RewriteParams) []byte {
 	} else {
 		delete(fm, "forked_from")
 	}
-
-	// Remove fields we explicitly don't want in the frontmatter
-	delete(fm, "source_slug")
 
 	yamlBytes, err := yaml.Marshal(fm)
 	if err != nil {
