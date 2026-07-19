@@ -566,3 +566,70 @@ func TestFlushWorker_DBFail_RestoresThenNextFlushSucceeds(t *testing.T) {
 		t.Errorf("expected (5,2,1), got (%d,%d,%d)", c.ViewDelta, c.DownloadDelta, c.InstallDelta)
 	}
 }
+
+func TestFlushWorker_ContextCancel_RestoresCounters(t *testing.T) {
+	// Simulates: getAndResetCounters succeeds (GETSET clears counters), then
+	// the context is cancelled (e.g. graceful shutdown), causing upsertWithRetry
+	// to fail with context.Canceled. Recovery (restoreCounters + requeue) must
+	// still succeed because they use independent contexts.
+	cancelOnUpsert := &contextCancelOnUpsertRepo{t: t}
+	mr := miniredis.RunT(t)
+	rdb := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
+	cfg := DefaultFlushWorkerConfig()
+	cfg.Batch = 500
+	w := NewFlushWorker(rdb, cancelOnUpsert, cfg)
+
+	// Set up dirty item with all three counters
+	mr.Set("metrics:skill:sk-cancel:view", "7")
+	mr.Set("metrics:skill:sk-cancel:download", "3")
+	mr.Set("metrics:skill:sk-cancel:install", "2")
+	mr.SAdd("metrics:dirty", "skill:sk-cancel")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancelOnUpsert.cancel = cancel
+
+	// flush: acquires lock → GETSET clears counters → upsert triggers cancel → restoreCounters
+	w.flush(ctx)
+
+	// No successful upserts
+	if len(cancelOnUpsert.calls) != 0 {
+		t.Fatalf("expected 0 successful upserts, got %d", len(cancelOnUpsert.calls))
+	}
+
+	// Counters must be restored despite context cancellation
+	viewVal, _ := mr.Get("metrics:skill:sk-cancel:view")
+	if viewVal != "7" {
+		t.Errorf("expected view counter restored to 7 after ctx cancel, got %q", viewVal)
+	}
+	dlVal, _ := mr.Get("metrics:skill:sk-cancel:download")
+	if dlVal != "3" {
+		t.Errorf("expected download counter restored to 3 after ctx cancel, got %q", dlVal)
+	}
+	installVal, _ := mr.Get("metrics:skill:sk-cancel:install")
+	if installVal != "2" {
+		t.Errorf("expected install counter restored to 2 after ctx cancel, got %q", installVal)
+	}
+
+	// Dirty member must be re-added
+	members, _ := mr.Members("metrics:dirty")
+	if len(members) != 1 || members[0] != "skill:sk-cancel" {
+		t.Errorf("expected dirty set to have [skill:sk-cancel], got %v", members)
+	}
+}
+
+// contextCancelOnUpsertRepo cancels ctx on the first UpsertCounts call and returns ctx.Err().
+// This simulates: GETSET already cleared counters, then graceful shutdown fires.
+type contextCancelOnUpsertRepo struct {
+	mockRepo
+	cancel context.CancelFunc
+	t      *testing.T
+}
+
+func (r *contextCancelOnUpsertRepo) UpsertCounts(ctx context.Context, resourceType, resourceID string, viewDelta, downloadDelta, installDelta int64) error {
+	if r.cancel != nil {
+		r.cancel()
+		r.cancel = nil
+	}
+	// Return context error to simulate cancelled DB call
+	return ctx.Err()
+}
