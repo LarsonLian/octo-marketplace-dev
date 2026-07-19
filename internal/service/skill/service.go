@@ -73,6 +73,8 @@ type SkillItem struct {
 	ReadmeContent string          `json:"readme_content,omitempty"`
 	FileName      string          `json:"file_name"`
 	FileSize      int64           `json:"file_size"`
+	ViewCount     int64           `json:"view_count"`
+	DownloadCount int64           `json:"download_count"`
 	CreatedAt     string          `json:"created_at"`
 	UpdatedAt     string          `json:"updated_at"`
 
@@ -88,6 +90,7 @@ type SkillItem struct {
 type ListResult struct {
 	Items      []SkillItem `json:"items"`
 	NextCursor *string     `json:"next_cursor"`
+	Total      int         `json:"total,omitempty"` // set for offset-based pagination
 }
 
 // TagItem is the API-facing representation of a Space-scoped skill tag.
@@ -107,6 +110,8 @@ type ListParams struct {
 	Tags       []string
 	Cursor     string
 	Limit      int
+	Offset     int
+	Sort       string // comprehensive, latest, downloads, views
 }
 
 // List returns skills visible to the user.
@@ -119,6 +124,8 @@ func (s *Service) List(ctx context.Context, p ListParams) (*ListResult, error) {
 		Tags:       normalizeTags(p.Tags),
 		Cursor:     p.Cursor,
 		Limit:      p.Limit,
+		Offset:     p.Offset,
+		Sort:       p.Sort,
 		MineOnly:   false,
 	})
 	if err != nil {
@@ -127,7 +134,8 @@ func (s *Service) List(ctx context.Context, p ListParams) (*ListResult, error) {
 	return s.toListResult(ctx, repoResult), nil
 }
 
-// ListMine returns skills owned by the user.
+// ListMine returns skills owned by the user. Always uses latest (cursor) sort
+// to preserve backward-compatible cursor pagination on the /skills/mine endpoint.
 func (s *Service) ListMine(ctx context.Context, p ListParams) (*ListResult, error) {
 	repoResult, err := s.repo.List(ctx, skillrepo.ListFilter{
 		SpaceID:  p.SpaceID,
@@ -136,6 +144,7 @@ func (s *Service) ListMine(ctx context.Context, p ListParams) (*ListResult, erro
 		Tags:     normalizeTags(p.Tags),
 		Cursor:   p.Cursor,
 		Limit:    p.Limit,
+		Sort:     skillrepo.SortLatest,
 		MineOnly: true,
 	})
 	if err != nil {
@@ -752,6 +761,8 @@ func (s *Service) rowToItem(ctx context.Context, row *skillrepo.SkillRow) SkillI
 		FileURL:       fileURL,
 		FileSize:      fileSize,
 		FileSHA256:    fileSHA256,
+		ViewCount:     row.ViewCount,
+		DownloadCount: row.DownloadCount,
 		CreatedAt:     row.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
 		UpdatedAt:     row.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"),
 	}
@@ -762,7 +773,7 @@ func (s *Service) toListResult(ctx context.Context, r *skillrepo.ListResult) *Li
 	for i := range r.Items {
 		items = append(items, s.rowToItem(ctx, &r.Items[i]))
 	}
-	return &ListResult{Items: items, NextCursor: r.NextCursor}
+	return &ListResult{Items: items, NextCursor: r.NextCursor, Total: r.Total}
 }
 
 // isURL returns true if the string looks like a full URL (not an object key).
