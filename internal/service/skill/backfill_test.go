@@ -180,3 +180,142 @@ func TestBackfill_MigrationSQL_Logic(t *testing.T) {
 		t.Errorf("unmet expectations: %v", err)
 	}
 }
+
+// TestBackfill_List_UsesCurrentVersionStorage verifies that after backfill,
+// the List/ListMine endpoints return file metadata from the current version's
+// VersionStorage JSON, not from the stale skills.file_* columns.
+func TestBackfill_List_UsesCurrentVersionStorage(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	store := &fakeStorage{}
+	repo := skillrepo.New(db)
+	catRepo := categoryrepo.New(db)
+	svc := New(repo, catRepo, store, func() string { return "id" })
+
+	now := time.Now()
+
+	// Simulate a List query returning a backfilled skill where:
+	// - skills.file_size = 512 (old stale value)
+	// - version_storage contains zip_size = 8192 (current version value)
+	listRows := sqlmock.NewRows([]string{
+		"id", "name", "display_name", "icon_url", "source_skill_id", "current_version_id",
+		"description", "category_id", "tags", "owner_id", "owner_name",
+		"space_id", "visibility", "version", "readme_content", "file_name", "file_url",
+		"file_size", "file_sha256", "created_at", "updated_at",
+		"resolved_version", "version_storage",
+	}).AddRow(
+		"list-bk-1", "Listed Skill", "Listed Skill", "", "", "ver-list-1",
+		"desc", "", []byte(`[]`), "user-list", "User List",
+		"space-list", "space", "1.0.0", "", "old.zip",
+		"skills/list-bk-1/v1.0.0/old.zip", int64(512), "oldsha",
+		now, now,
+		"2.0.0",
+		`{"type":"s3","zip_object_key":"skills/list-bk-1/v2.0.0/skill.zip","skill_md_object_key":"skills/list-bk-1/v2.0.0/SKILL.md","zip_file_name":"skill.zip","zip_size":8192,"zip_sha256":"newsha"}`,
+	)
+	mock.ExpectQuery("SELECT .+ FROM skills").
+		WillReturnRows(listRows)
+
+	ctx := context.Background()
+	result, err := svc.List(ctx, ListParams{
+		SpaceID: "space-list",
+		UserID:  "user-list",
+		Limit:   20,
+	})
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+	if len(result.Items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(result.Items))
+	}
+
+	item := result.Items[0]
+
+	// Assert current version metadata is used (from VersionStorage), not stale columns
+	if item.Version != "2.0.0" {
+		t.Errorf("Version = %q, want %q (from current version)", item.Version, "2.0.0")
+	}
+	if item.FileName != "skill.zip" {
+		t.Errorf("FileName = %q, want %q (from version_storage)", item.FileName, "skill.zip")
+	}
+	if item.FileSize != 8192 {
+		t.Errorf("FileSize = %d, want 8192 (from version_storage, not stale 512)", item.FileSize)
+	}
+	if item.FileSHA256 != "newsha" {
+		t.Errorf("FileSHA256 = %q, want %q (from version_storage)", item.FileSHA256, "newsha")
+	}
+	if item.FileURL != "skills/list-bk-1/v2.0.0/skill.zip" {
+		t.Errorf("FileURL = %q, want %q (from version_storage)", item.FileURL, "skills/list-bk-1/v2.0.0/skill.zip")
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet DB expectations: %v", err)
+	}
+}
+
+// TestBackfill_ListMine_UsesCurrentVersionStorage verifies ListMine also uses
+// the version_storage from the JOIN result.
+func TestBackfill_ListMine_UsesCurrentVersionStorage(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	store := &fakeStorage{}
+	repo := skillrepo.New(db)
+	catRepo := categoryrepo.New(db)
+	svc := New(repo, catRepo, store, func() string { return "id" })
+
+	now := time.Now()
+
+	listRows := sqlmock.NewRows([]string{
+		"id", "name", "display_name", "icon_url", "source_skill_id", "current_version_id",
+		"description", "category_id", "tags", "owner_id", "owner_name",
+		"space_id", "visibility", "version", "readme_content", "file_name", "file_url",
+		"file_size", "file_sha256", "created_at", "updated_at",
+		"resolved_version", "version_storage",
+	}).AddRow(
+		"mine-bk-1", "My BK Skill", "My BK Skill", "", "", "ver-mine-1",
+		"desc", "", []byte(`[]`), "owner-mine", "Owner Mine",
+		"space-mine", "private", "1.0.0", "", "legacy.zip",
+		"skills/mine-bk-1/v1.0.0/legacy.zip", int64(512), "legsha",
+		now, now,
+		"3.0.0",
+		`{"type":"s3","zip_object_key":"skills/mine-bk-1/v3.0.0/skill.zip","zip_file_name":"skill.zip","zip_size":16384,"zip_sha256":"v3sha"}`,
+	)
+	mock.ExpectQuery("SELECT .+ FROM skills").
+		WillReturnRows(listRows)
+
+	ctx := context.Background()
+	result, err := svc.ListMine(ctx, ListParams{
+		SpaceID: "space-mine",
+		UserID:  "owner-mine",
+		Limit:   20,
+	})
+	if err != nil {
+		t.Fatalf("ListMine failed: %v", err)
+	}
+	if len(result.Items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(result.Items))
+	}
+
+	item := result.Items[0]
+
+	if item.Version != "3.0.0" {
+		t.Errorf("Version = %q, want %q", item.Version, "3.0.0")
+	}
+	if item.FileSize != 16384 {
+		t.Errorf("FileSize = %d, want 16384 (from version_storage)", item.FileSize)
+	}
+	if item.FileSHA256 != "v3sha" {
+		t.Errorf("FileSHA256 = %q, want %q", item.FileSHA256, "v3sha")
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet DB expectations: %v", err)
+	}
+}

@@ -123,7 +123,8 @@ func (r *Repo) List(ctx context.Context, f ListFilter) (*ListResult, error) {
 			s.owner_id, s.owner_name, s.space_id, s.visibility, s.version,
 			s.readme_content, s.file_name, s.file_url, s.file_size, s.file_sha256,
 			s.created_at, s.updated_at,
-			COALESCE(v.version, s.version) AS resolved_version
+			COALESCE(v.version, s.version) AS resolved_version,
+			COALESCE(v.storage, '') AS version_storage
 		FROM skills s
 		LEFT JOIN skill_versions v ON v.id = s.current_version_id
 		%s
@@ -147,7 +148,7 @@ func (r *Repo) List(ctx context.Context, f ListFilter) (*ListResult, error) {
 			&s.OwnerID, &s.OwnerName, &s.SpaceID, &s.Visibility, &s.Version,
 			&s.ReadmeContent, &s.FileName, &s.FileURL, &s.FileSize, &s.FileSHA256,
 			&s.CreatedAt, &s.UpdatedAt,
-			&s.ResolvedVersion,
+			&s.ResolvedVersion, &s.VersionStorage,
 		); err != nil {
 			return nil, err
 		}
