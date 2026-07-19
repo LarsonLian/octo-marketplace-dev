@@ -189,15 +189,16 @@ func (h *Handler) Get(c *gin.Context) {
 
 // createRequest is the JSON body for POST /api/v1/skill.
 type CreateRequest struct {
-	ParseTaskID string          `json:"parse_task_id" binding:"required"`
-	Name        string          `json:"name"`
-	DisplayName string          `json:"display_name"`
-	IconURL     string          `json:"icon_url"`
-	Description string          `json:"description"`
-	CategoryID  string          `json:"category_id"`
-	Tags        json.RawMessage `json:"tags"`
-	Visibility  string          `json:"visibility"`
-	Version     string          `json:"version"`
+	ParseTaskID   string          `json:"parse_task_id" binding:"required"`
+	Name          string          `json:"name"`
+	DisplayName   string          `json:"display_name"`
+	IconURL       string          `json:"icon_url"`
+	Description   string          `json:"description"`
+	CategoryID    string          `json:"category_id"`
+	Tags          json.RawMessage `json:"tags"`
+	Visibility    string          `json:"visibility"`
+	Version       string          `json:"version"`
+	SourceSkillID string          `json:"source_skill_id"`
 }
 
 // Create godoc
@@ -232,18 +233,19 @@ func (h *Handler) Create(c *gin.Context) {
 	}
 
 	item, err := h.svc.Create(c.Request.Context(), skillsvc.CreateParams{
-		ParseTaskID: req.ParseTaskID,
-		Name:        req.Name,
-		DisplayName: req.DisplayName,
-		IconURL:     req.IconURL,
-		Description: req.Description,
-		CategoryID:  req.CategoryID,
-		Tags:        req.Tags,
-		Visibility:  req.Visibility,
-		Version:     req.Version,
-		UserID:      identity.UID,
-		UserName:    identity.Name,
-		SpaceID:     spaceID,
+		ParseTaskID:   req.ParseTaskID,
+		Name:          req.Name,
+		DisplayName:   req.DisplayName,
+		IconURL:       req.IconURL,
+		Description:   req.Description,
+		CategoryID:    req.CategoryID,
+		Tags:          req.Tags,
+		Visibility:    req.Visibility,
+		Version:       req.Version,
+		SourceSkillID: req.SourceSkillID,
+		UserID:        identity.UID,
+		UserName:      identity.Name,
+		SpaceID:       spaceID,
 	})
 	if err != nil {
 		if errors.Is(err, skillsvc.ErrInvalidParseTask) {
@@ -343,6 +345,10 @@ func (h *Handler) Update(c *gin.Context) {
 		}
 		if errors.Is(err, skillsvc.ErrInvalidParseTask) {
 			apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "invalid or unavailable parse task", nil, "")
+			return
+		}
+		if errors.Is(err, skillsvc.ErrIDMismatch) {
+			apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "zip id does not match skill id", nil, "")
 			return
 		}
 		if errors.Is(err, skillsvc.ErrParseTaskConsumed) {

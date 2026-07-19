@@ -55,6 +55,9 @@ var ErrInvalidTags = errors.New("invalid tags")
 // ErrNoFile indicates that the skill version has no downloadable file.
 var ErrNoFile = errors.New("no file available")
 
+// ErrIDMismatch indicates the zip's embedded id does not match the target skill.
+var ErrIDMismatch = errors.New("zip id mismatch")
+
 // SkillItem is the API-facing representation of a skill.
 type SkillItem struct {
 	ID            string          `json:"skill_id"`
@@ -447,6 +450,10 @@ func (s *Service) Update(ctx context.Context, id, userID, spaceID string, p Upda
 		if pt.SkillID != "" && pt.SkillID != id {
 			return nil, ErrInvalidParseTask
 		}
+		// Validate zip embedded id matches current skill id
+		if pt.ResultID != "" && pt.ResultID != id {
+			return nil, ErrIDMismatch
+		}
 
 		// Determine version for final key
 		version := row.Version
@@ -703,6 +710,14 @@ func (s *Service) rowToItem(ctx context.Context, row *skillrepo.SkillRow) SkillI
 		if err := json.Unmarshal([]byte(row.VersionStorage), &vs); err == nil {
 			if vs.ZipObjectKey != "" {
 				fileURL = vs.ZipObjectKey
+			} else {
+				// Legacy storage format: fallback to "object_key"
+				var legacy struct {
+					ObjectKey string `json:"object_key"`
+				}
+				if json.Unmarshal([]byte(row.VersionStorage), &legacy) == nil && legacy.ObjectKey != "" {
+					fileURL = legacy.ObjectKey
+				}
 			}
 			if vs.ZipFileName != "" {
 				fileName = vs.ZipFileName

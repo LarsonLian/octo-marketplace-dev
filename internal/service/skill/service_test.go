@@ -292,3 +292,35 @@ func TestExtractReadmeBody(t *testing.T) {
 		})
 	}
 }
+
+func TestRowToItem_LegacyObjectKeyFallback(t *testing.T) {
+	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+	row := &skillrepo.SkillRow{
+		ID:              "id-legacy",
+		Name:            "Legacy V2",
+		Version:         "1.0.0",
+		ResolvedVersion: "1.0.0",
+		VersionStorage:  `{"type":"s3","object_key":"skills/id-legacy/v1.0.0/skill.zip"}`,
+		FileName:        "",
+		FileURL:         "",
+		FileSize:        0,
+		FileSHA256:      "",
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
+	svc := &Service{}
+	item := svc.rowToItem(context.Background(), row)
+
+	if item.FileURL != "skills/id-legacy/v1.0.0/skill.zip" {
+		t.Errorf("FileURL = %q, want %q", item.FileURL, "skills/id-legacy/v1.0.0/skill.zip")
+	}
+	if item.FileName != "skill.zip" {
+		t.Errorf("FileName = %q, want %q", item.FileName, "skill.zip")
+	}
+}
+
+func TestErrIDMismatch(t *testing.T) {
+	if !errors.Is(ErrIDMismatch, ErrIDMismatch) {
+		t.Error("ErrIDMismatch should be identifiable")
+	}
+}
