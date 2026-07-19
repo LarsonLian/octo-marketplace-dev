@@ -129,13 +129,19 @@ func (w *FlushWorker) flush(ctx context.Context) {
 		}
 	}
 
-	// 3. Re-add failed members to dirty set (after SPOP loop to avoid re-popping)
+	// 3. Re-add failed members to dirty set (after SPOP loop to avoid re-popping).
+	// Use an independent context so that requeue succeeds even if the flush ctx
+	// was cancelled (e.g. graceful shutdown after GETSET already cleared counters).
 	if len(failedMembers) > 0 {
+		requeueCtx, requeueCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		ifaces := make([]interface{}, len(failedMembers))
 		for i, m := range failedMembers {
 			ifaces[i] = m
 		}
-		w.rdb.SAdd(ctx, dirtySetKey, ifaces...)
+		if err := w.rdb.SAdd(requeueCtx, dirtySetKey, ifaces...).Err(); err != nil {
+			log.Printf("[flush-worker] CRITICAL: failed to requeue %d dirty members: %v (data may be lost)", len(failedMembers), err)
+		}
+		requeueCancel()
 	}
 
 	duration := time.Since(start)
@@ -179,8 +185,11 @@ func (w *FlushWorker) processMember(ctx context.Context, member string, totalPro
 	// UPSERT to database with retries
 	if err := w.upsertWithRetry(ctx, resourceType, resourceID, viewDelta, downloadDelta, installDelta); err != nil {
 		log.Printf("[flush-worker] ERROR: db upsert failed for %s/%s after retries: %v", resourceType, resourceID, err)
-		// Restore deltas to Redis so they are not lost
-		w.restoreCounters(ctx, resourceType, resourceID, viewDelta, downloadDelta, installDelta)
+		// Restore deltas to Redis so they are not lost. Use an independent context
+		// so that recovery succeeds even if the flush ctx was cancelled (e.g. graceful shutdown).
+		restoreCtx, restoreCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		w.restoreCounters(restoreCtx, resourceType, resourceID, viewDelta, downloadDelta, installDelta)
+		restoreCancel()
 		// Collect for re-add to dirty set after the SPOP loop
 		*failedMembers = append(*failedMembers, member)
 		*totalDBFails++
