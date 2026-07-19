@@ -29,6 +29,25 @@ type VersionRow struct {
 	CreatedAt time.Time
 }
 
+// GetVersionByID returns a single version row by its ID. Returns nil if not found.
+func (r *Repo) GetVersionByID(ctx context.Context, id string) (*VersionRow, error) {
+	var row VersionRow
+	var changelog, storage sql.NullString
+	err := r.db.QueryRowContext(ctx,
+		`SELECT id, skill_id, version, changelog, storage, changed_by, created_at
+		 FROM skill_versions WHERE id = ?`, id,
+	).Scan(&row.ID, &row.SkillID, &row.Version, &changelog, &storage, &row.ChangedBy, &row.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	row.Changelog = changelog.String
+	row.Storage = storage.String
+	return &row, nil
+}
+
 // ListVersions returns all versions for a skill, ordered by created_at DESC.
 func (r *Repo) ListVersions(ctx context.Context, skillID string) ([]VersionRow, error) {
 	rows, err := r.db.QueryContext(ctx,
