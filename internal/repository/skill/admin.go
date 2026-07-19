@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/Mininglamp-OSS/octo-marketplace/internal/model"
 )
 
 // AdminListFilter holds parameters for admin-level skill listing.
@@ -137,4 +139,54 @@ func (r *Repo) AdminConsumeParseTask(ctx context.Context, id string) error {
 		return ErrParseTaskAlreadyConsumed
 	}
 	return nil
+}
+
+// AdminUpdateSkillAndConsumeTask updates a skill, inserts a new version record,
+// and marks the parse task as consumed within a single transaction without
+// owner/space checks on the parse task (admin-only).
+func (r *Repo) AdminUpdateSkillAndConsumeTask(ctx context.Context, skillID string, p UpdateParams, parseTaskID string, ver *model.SkillVersion) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Consume parse task first (acts as a lock, no owner/space check)
+	res, err := tx.ExecContext(ctx,
+		"UPDATE parse_tasks SET status = 'consumed' WHERE id = ? AND status = 'success'",
+		parseTaskID)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return ErrParseTaskAlreadyConsumed
+	}
+
+	// Build and execute the skill update
+	sets, args := buildUpdateSets(p)
+	if len(sets) > 0 {
+		query := "UPDATE skills SET " + joinStrings(sets, ", ") + " WHERE id = ?"
+		args = append(args, skillID)
+		if _, err := tx.ExecContext(ctx, query, args...); err != nil {
+			return mapDuplicateName(err)
+		}
+	}
+
+	// Insert the new version record in the same transaction
+	if ver != nil {
+		_, err = tx.ExecContext(ctx,
+			`INSERT INTO skill_versions (id, skill_id, version, changelog, storage, changed_by)
+			 VALUES (?, ?, ?, ?, ?, ?)`,
+			ver.ID, ver.SkillID, ver.Version, ver.Changelog, ver.Storage, ver.ChangedBy,
+		)
+		if err != nil {
+			return fmt.Errorf("insert version: %w", err)
+		}
+	}
+
+	return tx.Commit()
 }

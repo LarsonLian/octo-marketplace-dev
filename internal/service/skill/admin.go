@@ -210,19 +210,8 @@ func (s *Service) AdminCreate(ctx context.Context, p AdminCreateParams) (*SkillI
 		readmeContent = extractReadmeBody(rewriteResult.SkillMD)
 	}
 
-	// Consume parse task (no owner/space checks)
-	if err := s.repo.AdminConsumeParseTask(ctx, p.ParseTaskID); err != nil {
-		// Cleanup uploaded objects
-		_ = s.store.DeleteObject(ctx, zipObjectKey)
-		_ = s.store.DeleteObject(ctx, skillMdObjectKey)
-		if errors.Is(err, skillrepo.ErrParseTaskAlreadyConsumed) {
-			return nil, ErrParseTaskConsumed
-		}
-		return nil, err
-	}
-
-	// Create skill with visibility=public, space_id=''
-	row, err := s.repo.Create(ctx, skillrepo.CreateParams{
+	// Transactionally: consume parse task, create skill, and insert version
+	row, err := s.repo.CreateSkillAndConsumeTask(ctx, p.ParseTaskID, skillrepo.CreateParams{
 		ID:               id,
 		Name:             name,
 		DisplayName:      p.DisplayName,
@@ -242,18 +231,7 @@ func (s *Service) AdminCreate(ctx context.Context, p AdminCreateParams) (*SkillI
 		FileSize:         rewriteResult.ZipSize,
 		FileSHA256:       rewriteResult.ZipSHA256,
 		TagNames:         tagNames,
-	})
-	if err != nil {
-		_ = s.store.DeleteObject(ctx, zipObjectKey)
-		_ = s.store.DeleteObject(ctx, skillMdObjectKey)
-		if errors.Is(err, skillrepo.ErrNameTaken) {
-			return nil, ErrNameTaken
-		}
-		return nil, err
-	}
-
-	// Insert version record
-	_ = s.repo.InsertVersion(ctx, model.SkillVersion{
+	}, &model.SkillVersion{
 		ID:        versionID,
 		SkillID:   id,
 		Version:   version,
@@ -261,6 +239,17 @@ func (s *Service) AdminCreate(ctx context.Context, p AdminCreateParams) (*SkillI
 		Storage:   string(storageJSON),
 		ChangedBy: p.AdminUID,
 	})
+	if err != nil {
+		_ = s.store.DeleteObject(ctx, zipObjectKey)
+		_ = s.store.DeleteObject(ctx, skillMdObjectKey)
+		if errors.Is(err, skillrepo.ErrParseTaskAlreadyConsumed) {
+			return nil, ErrParseTaskConsumed
+		}
+		if errors.Is(err, skillrepo.ErrNameTaken) {
+			return nil, ErrNameTaken
+		}
+		return nil, err
+	}
 
 	// Best-effort cleanup of the temporary zip
 	if pt.FileURL != zipObjectKey {
@@ -372,7 +361,7 @@ func (s *Service) AdminGetSkillMD(ctx context.Context, id string) ([]byte, error
 	if err != nil {
 		return nil, err
 	}
-	if row == nil {
+	if row == nil || row.Visibility != "public" {
 		return nil, ErrNotFound
 	}
 
@@ -550,29 +539,8 @@ func (s *Service) AdminReupload(ctx context.Context, id string, p AdminReuploadP
 	versionID := s.idGen()
 	repoParams.CurrentVersionID = &versionID
 
-	// Consume parse task (no owner/space checks)
-	if err := s.repo.AdminConsumeParseTask(ctx, p.ParseTaskID); err != nil {
-		_ = s.store.DeleteObject(ctx, zipObjectKey)
-		_ = s.store.DeleteObject(ctx, skillMdObjectKey)
-		if errors.Is(err, skillrepo.ErrParseTaskAlreadyConsumed) {
-			return nil, ErrParseTaskConsumed
-		}
-		return nil, err
-	}
-
-	// Update skill
-	_, err = s.repo.Update(ctx, id, repoParams)
-	if err != nil {
-		_ = s.store.DeleteObject(ctx, zipObjectKey)
-		_ = s.store.DeleteObject(ctx, skillMdObjectKey)
-		if errors.Is(err, skillrepo.ErrNameTaken) {
-			return nil, ErrNameTaken
-		}
-		return nil, err
-	}
-
-	// Insert version record
-	_ = s.repo.InsertVersion(ctx, model.SkillVersion{
+	// Transactionally: consume parse task, update skill, and insert version
+	err = s.repo.AdminUpdateSkillAndConsumeTask(ctx, id, repoParams, p.ParseTaskID, &model.SkillVersion{
 		ID:        versionID,
 		SkillID:   id,
 		Version:   version,
@@ -580,6 +548,17 @@ func (s *Service) AdminReupload(ctx context.Context, id string, p AdminReuploadP
 		Storage:   string(storageJSON),
 		ChangedBy: p.AdminUID,
 	})
+	if err != nil {
+		_ = s.store.DeleteObject(ctx, zipObjectKey)
+		_ = s.store.DeleteObject(ctx, skillMdObjectKey)
+		if errors.Is(err, skillrepo.ErrParseTaskAlreadyConsumed) {
+			return nil, ErrParseTaskConsumed
+		}
+		if errors.Is(err, skillrepo.ErrNameTaken) {
+			return nil, ErrNameTaken
+		}
+		return nil, err
+	}
 
 	// Best-effort cleanup of the temporary zip
 	if pt.FileURL != zipObjectKey {
