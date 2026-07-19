@@ -163,7 +163,7 @@ func (w *FlushWorker) processMember(ctx context.Context, member string, totalPro
 	}
 
 	// Atomically get and reset counters
-	viewDelta, downloadDelta, err := w.getAndResetCounters(ctx, resourceType, resourceID)
+	viewDelta, downloadDelta, installDelta, err := w.getAndResetCounters(ctx, resourceType, resourceID)
 	if err != nil {
 		log.Printf("[flush-worker] ERROR: get counters for %s/%s: %v", resourceType, resourceID, err)
 		// Collect for re-add to dirty set after the SPOP loop
@@ -172,13 +172,15 @@ func (w *FlushWorker) processMember(ctx context.Context, member string, totalPro
 	}
 
 	// Skip if all deltas are zero
-	if viewDelta == 0 && downloadDelta == 0 {
+	if viewDelta == 0 && downloadDelta == 0 && installDelta == 0 {
 		return
 	}
 
 	// UPSERT to database with retries
-	if err := w.upsertWithRetry(ctx, resourceType, resourceID, viewDelta, downloadDelta); err != nil {
+	if err := w.upsertWithRetry(ctx, resourceType, resourceID, viewDelta, downloadDelta, installDelta); err != nil {
 		log.Printf("[flush-worker] ERROR: db upsert failed for %s/%s after retries: %v", resourceType, resourceID, err)
+		// Restore deltas to Redis so they are not lost
+		w.restoreCounters(ctx, resourceType, resourceID, viewDelta, downloadDelta, installDelta)
 		// Collect for re-add to dirty set after the SPOP loop
 		*failedMembers = append(*failedMembers, member)
 		*totalDBFails++
@@ -188,22 +190,47 @@ func (w *FlushWorker) processMember(ctx context.Context, member string, totalPro
 	*totalProcessed++
 }
 
-func (w *FlushWorker) getAndResetCounters(ctx context.Context, resourceType, resourceID string) (viewDelta, downloadDelta int64, err error) {
+func (w *FlushWorker) getAndResetCounters(ctx context.Context, resourceType, resourceID string) (viewDelta, downloadDelta, installDelta int64, err error) {
 	viewKey := fmt.Sprintf("%s%s:%s:view", keyPrefix, resourceType, resourceID)
 	downloadKey := fmt.Sprintf("%s%s:%s:download", keyPrefix, resourceType, resourceID)
+	installKey := fmt.Sprintf("%s%s:%s:install", keyPrefix, resourceType, resourceID)
 
 	// Use pipeline to atomically GetSet (GetSet replaces value with "0" and returns old value)
 	pipe := w.rdb.Pipeline()
 	viewCmd := pipe.GetSet(ctx, viewKey, "0")
 	downloadCmd := pipe.GetSet(ctx, downloadKey, "0")
+	installCmd := pipe.GetSet(ctx, installKey, "0")
 	_, err = pipe.Exec(ctx)
 	if err != nil && err != goredis.Nil {
-		return 0, 0, fmt.Errorf("pipeline exec: %w", err)
+		return 0, 0, 0, fmt.Errorf("pipeline exec: %w", err)
 	}
 
 	viewDelta = parseCounterResult(viewCmd)
 	downloadDelta = parseCounterResult(downloadCmd)
-	return viewDelta, downloadDelta, nil
+	installDelta = parseCounterResult(installCmd)
+	return viewDelta, downloadDelta, installDelta, nil
+}
+
+// restoreCounters adds back deltas to Redis counters after a DB write failure,
+// preventing permanent data loss.
+func (w *FlushWorker) restoreCounters(ctx context.Context, resourceType, resourceID string, viewDelta, downloadDelta, installDelta int64) {
+	viewKey := fmt.Sprintf("%s%s:%s:view", keyPrefix, resourceType, resourceID)
+	downloadKey := fmt.Sprintf("%s%s:%s:download", keyPrefix, resourceType, resourceID)
+	installKey := fmt.Sprintf("%s%s:%s:install", keyPrefix, resourceType, resourceID)
+
+	pipe := w.rdb.Pipeline()
+	if viewDelta > 0 {
+		pipe.IncrBy(ctx, viewKey, viewDelta)
+	}
+	if downloadDelta > 0 {
+		pipe.IncrBy(ctx, downloadKey, downloadDelta)
+	}
+	if installDelta > 0 {
+		pipe.IncrBy(ctx, installKey, installDelta)
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		log.Printf("[flush-worker] CRITICAL: failed to restore counters for %s/%s: %v (data may be lost)", resourceType, resourceID, err)
+	}
 }
 
 func parseCounterResult(cmd *goredis.StringCmd) int64 {
@@ -218,7 +245,7 @@ func parseCounterResult(cmd *goredis.StringCmd) int64 {
 	return n
 }
 
-func (w *FlushWorker) upsertWithRetry(ctx context.Context, resourceType, resourceID string, viewDelta, downloadDelta int64) error {
+func (w *FlushWorker) upsertWithRetry(ctx context.Context, resourceType, resourceID string, viewDelta, downloadDelta, installDelta int64) error {
 	const maxRetries = 3
 	const retryInterval = 100 * time.Millisecond
 
@@ -227,7 +254,7 @@ func (w *FlushWorker) upsertWithRetry(ctx context.Context, resourceType, resourc
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		err := w.repo.UpsertCounts(ctx, resourceType, resourceID, viewDelta, downloadDelta, 0)
+		err := w.repo.UpsertCounts(ctx, resourceType, resourceID, viewDelta, downloadDelta, installDelta)
 		if err == nil {
 			return nil
 		}

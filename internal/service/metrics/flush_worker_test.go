@@ -167,6 +167,7 @@ func TestFlushWorker_DeltaAllZero_SkipsUpsert(t *testing.T) {
 	// Key is dirty but counters are 0 (already flushed or race)
 	mr.Set("metrics:skill:sk-1:view", "0")
 	mr.Set("metrics:skill:sk-1:download", "0")
+	mr.Set("metrics:skill:sk-1:install", "0")
 	mr.SAdd("metrics:dirty", "skill:sk-1")
 
 	w.flush(ctx)
@@ -184,6 +185,7 @@ func TestFlushWorker_DBFailRetry_ThenSADDBack(t *testing.T) {
 	ctx := context.Background()
 
 	mr.Set("metrics:skill:sk-1:view", "3")
+	mr.Set("metrics:skill:sk-1:download", "2")
 	mr.SAdd("metrics:dirty", "skill:sk-1")
 
 	w.flush(ctx)
@@ -202,6 +204,16 @@ func TestFlushWorker_DBFailRetry_ThenSADDBack(t *testing.T) {
 	members, _ := mr.Members("metrics:dirty")
 	if len(members) != 1 || members[0] != "skill:sk-1" {
 		t.Errorf("expected dirty set to have [skill:sk-1], got %v", members)
+	}
+
+	// Counters should be restored to Redis (not lost)
+	viewVal, _ := mr.Get("metrics:skill:sk-1:view")
+	if viewVal != "3" {
+		t.Errorf("expected view counter restored to 3, got %q", viewVal)
+	}
+	dlVal, _ := mr.Get("metrics:skill:sk-1:download")
+	if dlVal != "2" {
+		t.Errorf("expected download counter restored to 2, got %q", dlVal)
 	}
 }
 
@@ -451,5 +463,106 @@ func TestParseCounterResult_EdgeCases(t *testing.T) {
 	result = parseCounterResult(cmd)
 	if result != 0 {
 		t.Errorf("expected 0 for non-numeric value, got %d", result)
+	}
+}
+
+func TestFlushWorker_InstallCounter_Flushed(t *testing.T) {
+	repo := &mockRepo{}
+	w, mr := setupTestWorker(t, repo)
+
+	ctx := context.Background()
+
+	// Simulate install event tracked by TrackInstall
+	mr.Set("metrics:skill:sk-1:install", "4")
+	mr.SAdd("metrics:dirty", "skill:sk-1")
+
+	w.flush(ctx)
+
+	if len(repo.calls) != 1 {
+		t.Fatalf("expected 1 upsert call, got %d", len(repo.calls))
+	}
+	if repo.calls[0].InstallDelta != 4 {
+		t.Errorf("expected installDelta=4, got %d", repo.calls[0].InstallDelta)
+	}
+	if repo.calls[0].ViewDelta != 0 {
+		t.Errorf("expected viewDelta=0, got %d", repo.calls[0].ViewDelta)
+	}
+	if repo.calls[0].DownloadDelta != 0 {
+		t.Errorf("expected downloadDelta=0, got %d", repo.calls[0].DownloadDelta)
+	}
+
+	// Verify install counter is reset
+	v, _ := mr.Get("metrics:skill:sk-1:install")
+	if v != "0" {
+		t.Errorf("expected install counter reset to 0, got %q", v)
+	}
+}
+
+func TestFlushWorker_AllCounters_Flushed(t *testing.T) {
+	repo := &mockRepo{}
+	w, mr := setupTestWorker(t, repo)
+
+	ctx := context.Background()
+
+	// Simulate all three events tracked
+	mr.Set("metrics:skill:sk-1:view", "10")
+	mr.Set("metrics:skill:sk-1:download", "5")
+	mr.Set("metrics:skill:sk-1:install", "3")
+	mr.SAdd("metrics:dirty", "skill:sk-1")
+
+	w.flush(ctx)
+
+	if len(repo.calls) != 1 {
+		t.Fatalf("expected 1 upsert call, got %d", len(repo.calls))
+	}
+	c := repo.calls[0]
+	if c.ViewDelta != 10 || c.DownloadDelta != 5 || c.InstallDelta != 3 {
+		t.Errorf("expected (10,5,3), got (%d,%d,%d)", c.ViewDelta, c.DownloadDelta, c.InstallDelta)
+	}
+}
+
+func TestFlushWorker_DBFail_RestoresThenNextFlushSucceeds(t *testing.T) {
+	// First flush: DB fails all 3 retries → counters restored to Redis + SADD back.
+	// Second flush: DB succeeds → counters finally persisted.
+	repo := &mockRepo{failN: 3}
+	w, mr := setupTestWorker(t, repo)
+
+	ctx := context.Background()
+
+	mr.Set("metrics:skill:sk-1:view", "5")
+	mr.Set("metrics:skill:sk-1:download", "2")
+	mr.Set("metrics:skill:sk-1:install", "1")
+	mr.SAdd("metrics:dirty", "skill:sk-1")
+
+	// First flush — fails
+	w.flush(ctx)
+
+	if len(repo.calls) != 0 {
+		t.Fatalf("expected 0 successful upserts after first flush, got %d", len(repo.calls))
+	}
+
+	// Verify counters preserved in Redis
+	viewVal, _ := mr.Get("metrics:skill:sk-1:view")
+	if viewVal != "5" {
+		t.Errorf("expected view=5 after failed flush, got %q", viewVal)
+	}
+	installVal, _ := mr.Get("metrics:skill:sk-1:install")
+	if installVal != "1" {
+		t.Errorf("expected install=1 after failed flush, got %q", installVal)
+	}
+
+	// Simulate DB recovery — no more failures
+	repo.failN = 0
+	repo.callCount = 0
+
+	// Second flush — succeeds
+	w.flush(ctx)
+
+	if len(repo.calls) != 1 {
+		t.Fatalf("expected 1 successful upsert after second flush, got %d", len(repo.calls))
+	}
+	c := repo.calls[0]
+	if c.ViewDelta != 5 || c.DownloadDelta != 2 || c.InstallDelta != 1 {
+		t.Errorf("expected (5,2,1), got (%d,%d,%d)", c.ViewDelta, c.DownloadDelta, c.InstallDelta)
 	}
 }
