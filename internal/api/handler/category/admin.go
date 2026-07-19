@@ -58,6 +58,10 @@ func (h *Handler) AdminCreate(c *gin.Context) {
 	}
 	item, err := h.svc.Create(c.Request.Context(), h.idGen(), req.Name, req.IconKey, req.SortOrder)
 	if err != nil {
+		if errors.Is(err, categorysvc.ErrCategoryAlreadyExists) {
+			apiresponse.Fail(c, http.StatusConflict, errcode.Conflict, "category name already exists", nil, "")
+			return
+		}
 		apiresponse.Fail(c, http.StatusInternalServerError, errcode.InternalError, "internal error", nil, "")
 		return
 	}
@@ -94,6 +98,10 @@ func (h *Handler) AdminUpdate(c *gin.Context) {
 	item, err := h.svc.Update(c.Request.Context(), c.Param("skill_category_id"), req.Name, req.IconKey, req.SortOrder)
 	if errors.Is(err, categorysvc.ErrCategoryNotFound) {
 		apiresponse.Fail(c, http.StatusNotFound, errcode.NotFound, "category not found", nil, "")
+		return
+	}
+	if errors.Is(err, categorysvc.ErrCategoryAlreadyExists) {
+		apiresponse.Fail(c, http.StatusConflict, errcode.Conflict, "category name already exists", nil, "")
 		return
 	}
 	if err != nil {

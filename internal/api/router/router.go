@@ -147,7 +147,9 @@ func publicWithOptions(database Pinger, authenticator *marketmiddleware.Authenti
 		catH := categoryhandler.New(catSvc)
 		catH.Register(v1)
 		catH.RegisterAdmin(r, adminAuth, generateID)
-		skillhandler.New(skSvc).Register(v1)
+		skHandler := skillhandler.New(skSvc)
+		skHandler.Register(v1)
+		skHandler.RegisterAdmin(r, adminAuth)
 
 		// Wire up metrics service and handler.
 		var mSvc *metricssvc.Service
