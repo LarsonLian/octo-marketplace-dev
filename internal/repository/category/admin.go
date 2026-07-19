@@ -12,7 +12,10 @@ func (r *Repo) Create(ctx context.Context, id, name, iconKey string, sortOrder i
 		`INSERT INTO categories (id, name, icon_key, sort_order, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
 		id, name, iconKey, sortOrder, now, now)
-	return err
+	if err != nil {
+		return mapCategoryDuplicateName(err)
+	}
+	return nil
 }
 
 // Update modifies an existing category.
@@ -21,7 +24,7 @@ func (r *Repo) Update(ctx context.Context, id, name, iconKey string, sortOrder i
 		`UPDATE categories SET name = ?, icon_key = ?, sort_order = ? WHERE id = ?`,
 		name, iconKey, sortOrder, id)
 	if err != nil {
-		return 0, err
+		return 0, mapCategoryDuplicateName(err)
 	}
 	return result.RowsAffected()
 }

@@ -3,6 +3,8 @@ package category
 import (
 	"context"
 	"errors"
+
+	categoryrepo "github.com/Mininglamp-OSS/octo-marketplace/internal/repository/category"
 )
 
 // ErrCategoryInUse indicates the category still has skills and cannot be deleted.
@@ -10,6 +12,9 @@ var ErrCategoryInUse = errors.New("category in use")
 
 // ErrCategoryNotFound indicates the category was not found.
 var ErrCategoryNotFound = errors.New("category not found")
+
+// ErrCategoryAlreadyExists indicates a category with the same name already exists.
+var ErrCategoryAlreadyExists = errors.New("category already exists")
 
 // AdminItem is the API-facing representation of a category for admin operations.
 type AdminItem struct {
@@ -22,6 +27,9 @@ type AdminItem struct {
 // Create creates a new category.
 func (s *Service) Create(ctx context.Context, id, name, iconKey string, sortOrder int) (*AdminItem, error) {
 	if err := s.repo.Create(ctx, id, name, iconKey, sortOrder); err != nil {
+		if errors.Is(err, categoryrepo.ErrCategoryNameTaken) {
+			return nil, ErrCategoryAlreadyExists
+		}
 		return nil, err
 	}
 	return &AdminItem{
@@ -36,6 +44,9 @@ func (s *Service) Create(ctx context.Context, id, name, iconKey string, sortOrde
 func (s *Service) Update(ctx context.Context, id, name, iconKey string, sortOrder int) (*AdminItem, error) {
 	affected, err := s.repo.Update(ctx, id, name, iconKey, sortOrder)
 	if err != nil {
+		if errors.Is(err, categoryrepo.ErrCategoryNameTaken) {
+			return nil, ErrCategoryAlreadyExists
+		}
 		return nil, err
 	}
 	if affected == 0 {
