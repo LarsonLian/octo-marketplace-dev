@@ -32,6 +32,33 @@ type AdminCategoryRequest struct {
 	SortOrder int    `json:"sort_order"`
 }
 
+// AdminList godoc
+// @Summary List Skill categories (admin)
+// @Description Return non-deleted Skill categories for administrator management.
+// @Tags skill_category
+// @ID skill_category.admin.list
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Success 200 {object} apiresponse.Data[[]categorysvc.AdminItem]
+// @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
+// @Failure 404 {object} apiresponse.Error "NOT_FOUND"
+// @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
+// @Router /admin/skill_categories [get]
+func (h *Handler) AdminList(c *gin.Context) {
+	if _, ok := middleware.Identity(c); !ok {
+		apiresponse.Fail(c, http.StatusUnauthorized, errcode.Unauthorized, "authentication is required", nil, "")
+		return
+	}
+	items, err := h.svc.AdminList(c.Request.Context())
+	if err != nil {
+		apiresponse.Fail(c, http.StatusInternalServerError, errcode.InternalError, "internal error", nil, "")
+		return
+	}
+	apiresponse.OK(c, items)
+}
+
 // AdminCreate godoc
 // @Summary Create Skill category
 // @Description Create a Skill category through the admin-token protected administrator surface.
@@ -46,21 +73,9 @@ type AdminCategoryRequest struct {
 // @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
 // @Failure 403 {object} apiresponse.Error "FORBIDDEN"
 // @Failure 404 {object} apiresponse.Error "NOT_FOUND"
+// @Failure 409 {object} apiresponse.Error "CONFLICT"
 // @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
 // @Router /admin/skill_categories [post]
-func (h *Handler) AdminList(c *gin.Context) {
-	if _, ok := middleware.Identity(c); !ok {
-		apiresponse.Fail(c, http.StatusUnauthorized, errcode.Unauthorized, "authentication is required", nil, "")
-		return
-	}
-	items, err := h.svc.AdminList(c.Request.Context())
-	if err != nil {
-		apiresponse.Fail(c, http.StatusInternalServerError, errcode.InternalError, "internal error", nil, "")
-		return
-	}
-	apiresponse.OK(c, items)
-}
-
 func (h *Handler) AdminCreate(c *gin.Context) {
 	if _, ok := middleware.Identity(c); !ok {
 		apiresponse.Fail(c, http.StatusUnauthorized, errcode.Unauthorized, "authentication is required", nil, "")

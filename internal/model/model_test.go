@@ -29,13 +29,12 @@ func TestCategoryJSON(t *testing.T) {
 }
 
 func TestSkillJSON(t *testing.T) {
-	tags := json.RawMessage(`["go","automation"]`)
 	s := Skill{
 		ID:            "skill-1",
 		Name:          "My Skill",
 		Description:   "A test skill",
 		CategoryID:    "cat-1",
-		Tags:          tags,
+		Tags:          []string{"go", "automation"},
 		OwnerName:     "Alice",
 		Visibility:    VisibilityPublic,
 		Version:       "1.0.0",
@@ -56,12 +55,8 @@ func TestSkillJSON(t *testing.T) {
 	if got.ID != s.ID || got.Name != s.Name || got.Visibility != VisibilityPublic {
 		t.Fatalf("Skill round-trip mismatch: got=%+v", got)
 	}
-	var gotTags []string
-	if err := json.Unmarshal(got.Tags, &gotTags); err != nil {
-		t.Fatalf("Unmarshal tags: %v", err)
-	}
-	if len(gotTags) != 2 || gotTags[0] != "go" {
-		t.Fatalf("tags mismatch: %v", gotTags)
+	if len(got.Tags) != 2 || got.Tags[0] != "go" {
+		t.Fatalf("tags mismatch: %v", got.Tags)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -151,7 +152,7 @@ func TestWorkerMarksTaskFailedAfterParseTimeout(t *testing.T) {
 		PoolSize:     5,
 		ParseTimeout: 10 * time.Millisecond,
 	})
-	worker.process("task-1", "skills/upload-1/skill.zip", 1024)
+	worker.process(context.Background(), "task-1", "skills/upload-1/skill.zip", 1024)
 
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
@@ -175,6 +176,26 @@ func TestWorkerSubmitMasksPanicDetails(t *testing.T) {
 
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestWorkerProcessSyncHonorsSemaphoreAndContext(t *testing.T) {
+	db, _, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	worker := NewWorker(blockingStorage{}, NewRepo(db), db, WorkerConfig{PoolSize: 1, ParseTimeout: time.Second})
+	worker.sem <- struct{}{}
+	defer func() { <-worker.sem }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	err = worker.ProcessSync(ctx, "task-1", "skills/upload-1/skill.zip", 1024)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("ProcessSync error = %v, want deadline exceeded", err)
 	}
 }
 
@@ -242,7 +263,7 @@ func TestWorkerSanitizesReadmeBeforePersisting(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	worker := NewWorker(zipStorage{data: zipData}, NewRepo(db), db, WorkerConfig{PoolSize: 5, ParseTimeout: 30 * time.Second})
-	worker.process("task-1", "skills/upload-1/skill.zip", int64(len(zipData)+1024))
+	worker.process(context.Background(), "task-1", "skills/upload-1/skill.zip", int64(len(zipData)+1024))
 
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

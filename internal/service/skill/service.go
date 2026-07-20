@@ -60,25 +60,25 @@ var ErrIDMismatch = errors.New("zip id mismatch")
 
 // SkillItem is the API-facing representation of a skill.
 type SkillItem struct {
-	ID            string          `json:"skill_id"`
-	Name          string          `json:"name"`
-	DisplayName   string          `json:"display_name"`
-	IconURL       string          `json:"icon_url"`
-	Description   string          `json:"description"`
-	CategoryID    string          `json:"category_id"`
-	Tags          json.RawMessage `json:"tags"`
-	OwnerName     string          `json:"owner_name"`
-	CreatorID     string          `json:"creator_id"`
-	CreatorName   string          `json:"creator_name"`
-	Visibility    string          `json:"visibility"`
-	Version       string          `json:"version"`
-	ReadmeContent string          `json:"readme_content,omitempty"`
-	FileName      string          `json:"file_name"`
-	FileSize      int64           `json:"file_size"`
-	ViewCount     int64           `json:"view_count"`
-	DownloadCount int64           `json:"download_count"`
-	CreatedAt     string          `json:"created_at"`
-	UpdatedAt     string          `json:"updated_at"`
+	ID            string   `json:"skill_id"`
+	Name          string   `json:"name"`
+	DisplayName   string   `json:"display_name"`
+	IconURL       string   `json:"icon_url"`
+	Description   string   `json:"description"`
+	CategoryID    string   `json:"category_id"`
+	Tags          []string `json:"tags"`
+	OwnerName     string   `json:"owner_name"`
+	CreatorID     string   `json:"creator_id"`
+	CreatorName   string   `json:"creator_name"`
+	Visibility    string   `json:"visibility"`
+	Version       string   `json:"version"`
+	ReadmeContent string   `json:"readme_content,omitempty"`
+	FileName      string   `json:"file_name"`
+	FileSize      int64    `json:"file_size"`
+	ViewCount     int64    `json:"view_count"`
+	DownloadCount int64    `json:"download_count"`
+	CreatedAt     string   `json:"created_at"`
+	UpdatedAt     string   `json:"updated_at"`
 
 	// Internal authorization and storage metadata. These fields are required
 	// by download handlers but must never be serialized in catalog responses.
@@ -766,7 +766,7 @@ func (s *Service) rowToItem(ctx context.Context, row *skillrepo.SkillRow) SkillI
 		IconURL:       iconURL,
 		Description:   row.Description,
 		CategoryID:    row.CategoryID,
-		Tags:          row.Tags,
+		Tags:          rawTagsToStrings(row.Tags),
 		OwnerID:       row.OwnerID,
 		OwnerName:     row.OwnerName,
 		CreatorID:     firstNonEmpty(row.CreatorID, row.OwnerID),
@@ -892,13 +892,13 @@ func extractReadmeBody(md []byte) string {
 
 // VersionItem is the API-facing representation of a skill version.
 type VersionItem struct {
-	ID        string          `json:"skill_version_id"`
-	SkillID   string          `json:"skill_id"`
-	Version   string          `json:"version"`
-	Changelog string          `json:"changelog"`
-	Storage   json.RawMessage `json:"storage"`
-	ChangedBy string          `json:"changed_by"`
-	CreatedAt string          `json:"created_at"`
+	ID        string         `json:"skill_version_id"`
+	SkillID   string         `json:"skill_id"`
+	Version   string         `json:"version"`
+	Changelog string         `json:"changelog"`
+	Storage   map[string]any `json:"storage"`
+	ChangedBy string         `json:"changed_by"`
+	CreatedAt string         `json:"created_at"`
 }
 
 // ListVersions returns version history for a skill. Viewer must have access.
@@ -918,11 +918,9 @@ func (s *Service) ListVersions(ctx context.Context, skillID, spaceID, userID str
 
 	items := make([]VersionItem, 0, len(rows))
 	for _, r := range rows {
-		var storage json.RawMessage
+		storage := map[string]any{}
 		if r.Storage != "" {
-			storage = json.RawMessage(r.Storage)
-		} else {
-			storage = json.RawMessage(`{}`)
+			_ = json.Unmarshal([]byte(r.Storage), &storage)
 		}
 		items = append(items, VersionItem{
 			ID:        r.ID,

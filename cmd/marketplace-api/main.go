@@ -37,10 +37,16 @@ import (
 // @tag.description Skill artifact ingestion and parsing
 // @tag.name skill_category
 // @tag.description Skill catalog categories
+// @tag.name admin_skill
+// @tag.description Administrative Skill catalog
 // @tag.name mcp
 // @tag.description MCP server catalog
 // @tag.name admin_mcp
 // @tag.description Administrative MCP catalog
+// @tag.name session
+// @tag.description Current authenticated user context
+// @tag.name metrics
+// @tag.description Marketplace interaction metrics
 // @securityDefinitions.apikey Bearer
 // @in header
 // @name Authorization

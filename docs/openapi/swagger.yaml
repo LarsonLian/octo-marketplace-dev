@@ -25,6 +25,14 @@ components:
           type: array
           uniqueItems: false
       type: object
+    ? github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Data-array_github_com_Mininglamp-OSS_octo-marketplace_internal_service_category_AdminItem
+    : properties:
+        data:
+          items:
+            $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_service_category.AdminItem'
+          type: array
+          uniqueItems: false
+      type: object
     ? github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Data-array_github_com_Mininglamp-OSS_octo-marketplace_internal_service_category_CategoryItem
     : properties:
         data:
@@ -72,6 +80,21 @@ components:
     : properties:
         data:
           $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_service_parse.PollResult'
+      type: object
+    ? github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Data-github_com_Mininglamp-OSS_octo-marketplace_internal_service_skill_SkillItem
+    : properties:
+        data:
+          $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_service_skill.SkillItem'
+      type: object
+    github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Data-internal_api_handler_SessionResponse:
+      properties:
+        data:
+          $ref: '#/components/schemas/internal_api_handler.SessionResponse'
+      type: object
+    github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Data-internal_api_handler_skill_SkillMDResponse:
+      properties:
+        data:
+          $ref: '#/components/schemas/internal_api_handler_skill.SkillMDResponse'
       type: object
     github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Data-internal_api_handler_skill_SkillResponse:
       properties:
@@ -122,6 +145,16 @@ components:
         data:
           items:
             $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_model.ListItem'
+          type: array
+          uniqueItems: false
+        pagination:
+          $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.OffsetPagination'
+      type: object
+    ? github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.OffsetList-github_com_Mininglamp-OSS_octo-marketplace_internal_service_skill_SkillItem
+    : properties:
+        data:
+          items:
+            $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_service_skill.SkillItem'
           type: array
           uniqueItems: false
         pagination:
@@ -603,6 +636,50 @@ components:
         status:
           type: string
       type: object
+    github_com_Mininglamp-OSS_octo-marketplace_internal_service_skill.SkillItem:
+      properties:
+        category_id:
+          type: string
+        created_at:
+          type: string
+        creator_id:
+          type: string
+        creator_name:
+          type: string
+        description:
+          type: string
+        display_name:
+          type: string
+        download_count:
+          type: integer
+        file_name:
+          type: string
+        file_size:
+          type: integer
+        icon_url:
+          type: string
+        name:
+          type: string
+        owner_name:
+          type: string
+        readme_content:
+          type: string
+        skill_id:
+          type: string
+        tags:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        updated_at:
+          type: string
+        version:
+          type: string
+        view_count:
+          type: integer
+        visibility:
+          type: string
+      type: object
     github_com_Mininglamp-OSS_octo-marketplace_internal_service_skill.TagItem:
       properties:
         created_at:
@@ -626,6 +703,15 @@ components:
       - file_name
       - file_size
       type: object
+    internal_api_handler.SessionResponse:
+      properties:
+        name:
+          type: string
+        space_id:
+          type: string
+        uid:
+          type: string
+      type: object
     internal_api_handler_category.AdminCategoryRequest:
       properties:
         icon_key:
@@ -637,7 +723,16 @@ components:
       required:
       - name
       type: object
-    internal_api_handler_skill.CreateRequest:
+    internal_api_handler_metrics.trackRequest:
+      properties:
+        event_type:
+          type: string
+        resource_id:
+          type: string
+        resource_type:
+          type: string
+      type: object
+    internal_api_handler_skill.AdminCreateRequest:
       properties:
         category_id:
           type: string
@@ -653,7 +748,69 @@ components:
           type: string
         tags:
           items:
-            type: integer
+            type: string
+          type: array
+          uniqueItems: false
+        version:
+          type: string
+      required:
+      - parse_task_id
+      type: object
+    internal_api_handler_skill.AdminReuploadRequest:
+      properties:
+        changelog:
+          type: string
+        parse_task_id:
+          type: string
+        tags:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        version:
+          type: string
+      required:
+      - parse_task_id
+      type: object
+    internal_api_handler_skill.AdminUpdateRequest:
+      properties:
+        category_id:
+          type: string
+        description:
+          type: string
+        display_name:
+          type: string
+        icon_url:
+          type: string
+        name:
+          type: string
+        tags:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+      type: object
+    internal_api_handler_skill.CreateRequest:
+      properties:
+        category_id:
+          type: string
+        changelog:
+          type: string
+        description:
+          type: string
+        display_name:
+          type: string
+        icon_url:
+          type: string
+        name:
+          type: string
+        parse_task_id:
+          type: string
+        source_skill_id:
+          type: string
+        tags:
+          items:
+            type: string
           type: array
           uniqueItems: false
         version:
@@ -663,11 +820,22 @@ components:
       required:
       - parse_task_id
       type: object
+    internal_api_handler_skill.SkillMDResponse:
+      properties:
+        content:
+          type: string
+      type: object
     internal_api_handler_skill.SkillResponse:
       properties:
         category_id:
           type: string
         created_at:
+          type: string
+        creator_id:
+          type: string
+        creator_name:
+          type: string
+        current_version_id:
           type: string
         description:
           type: string
@@ -687,9 +855,11 @@ components:
           type: string
         skill_id:
           type: string
+        source_skill_id:
+          type: string
         tags:
           items:
-            type: integer
+            type: string
           type: array
           uniqueItems: false
         updated_at:
@@ -733,9 +903,41 @@ components:
           type: string
         tags:
           items:
-            type: integer
+            type: string
           type: array
           uniqueItems: false
+        version:
+          type: string
+        visibility:
+          type: string
+      type: object
+    internal_api_handler_upload.BotPublishSkillRequest:
+      properties:
+        category_id:
+          type: string
+        changelog:
+          type: string
+        description:
+          type: string
+        display_name:
+          type: string
+        icon_url:
+          type: string
+        name:
+          type: string
+        presigned_url:
+          type: string
+        publish_mode:
+          type: string
+        skill_upload_id:
+          type: string
+        tags:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        upload_url:
+          type: string
         version:
           type: string
         visibility:
@@ -1155,6 +1357,50 @@ paths:
       tags:
       - admin_mcp
   /admin/skill_categories:
+    get:
+      description: Return non-deleted Skill categories for administrator management.
+      operationId: skill_category.admin.list
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Data-array_github_com_Mininglamp-OSS_octo-marketplace_internal_service_category_AdminItem'
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: AUTH_REQUIRED
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: FORBIDDEN
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: NOT_FOUND
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: INTERNAL_ERROR
+      security:
+      - Bearer: []
+      summary: List Skill categories (admin)
+      tags:
+      - skill_category
     post:
       description: Create a Skill category through the admin-token protected administrator
         surface.
@@ -1201,6 +1447,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
           description: NOT_FOUND
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: CONFLICT
         "500":
           content:
             application/json:
@@ -1335,6 +1587,562 @@ paths:
       summary: Update Skill category
       tags:
       - skill_category
+  /admin/skills:
+    get:
+      description: List all visibility=public skills without Space restriction.
+      operationId: admin_skill.list
+      parameters:
+      - description: Search name/description
+        in: query
+        name: q
+        schema:
+          type: string
+      - description: Category ID
+        in: query
+        name: category_id
+        schema:
+          type: string
+      - description: Comma-separated tags
+        in: query
+        name: tags
+        schema:
+          type: string
+      - description: 'Sort: latest, downloads, views, comprehensive'
+        in: query
+        name: sort
+        schema:
+          type: string
+      - description: Page number, default 1
+        in: query
+        name: page
+        schema:
+          type: integer
+      - description: Page size
+        in: query
+        name: page_size
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.OffsetList-github_com_Mininglamp-OSS_octo-marketplace_internal_service_skill_SkillItem'
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: AUTH_REQUIRED
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: FORBIDDEN
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: NOT_FOUND
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: INTERNAL_ERROR
+      security:
+      - Bearer: []
+      summary: List public skills (admin)
+      tags:
+      - admin_skill
+    post:
+      description: Create a system skill with visibility=public.
+      operationId: admin_skill.create
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/internal_api_handler_skill.AdminCreateRequest'
+                description: Skill
+                summary: body
+        description: Skill
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Data-github_com_Mininglamp-OSS_octo-marketplace_internal_service_skill_SkillItem'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: VALIDATION_ERROR
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: AUTH_REQUIRED
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: FORBIDDEN
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: NOT_FOUND
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: CONFLICT
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: INTERNAL_ERROR
+      security:
+      - Bearer: []
+      summary: Create public skill (admin)
+      tags:
+      - admin_skill
+  /admin/skills/{skill_id}:
+    delete:
+      description: Delete a public skill and its versions.
+      operationId: admin_skill.delete
+      parameters:
+      - description: Skill ID
+        in: path
+        name: skill_id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Data-github_com_Mininglamp-OSS_octo-marketplace_internal_api_response_EmptyResp'
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: AUTH_REQUIRED
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: FORBIDDEN
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: NOT_FOUND
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: INTERNAL_ERROR
+      security:
+      - Bearer: []
+      summary: Delete public skill (admin)
+      tags:
+      - admin_skill
+    get:
+      description: Return one public skill without Space restriction.
+      operationId: admin_skill.get
+      parameters:
+      - description: Skill ID
+        in: path
+        name: skill_id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Data-github_com_Mininglamp-OSS_octo-marketplace_internal_service_skill_SkillItem'
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: AUTH_REQUIRED
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: FORBIDDEN
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: NOT_FOUND
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: INTERNAL_ERROR
+      security:
+      - Bearer: []
+      summary: Get public skill detail (admin)
+      tags:
+      - admin_skill
+    patch:
+      description: Update basic info of a public skill.
+      operationId: admin_skill.update
+      parameters:
+      - description: Skill ID
+        in: path
+        name: skill_id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/internal_api_handler_skill.AdminUpdateRequest'
+                description: Skill changes
+                summary: body
+        description: Skill changes
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Data-github_com_Mininglamp-OSS_octo-marketplace_internal_service_skill_SkillItem'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: VALIDATION_ERROR
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: AUTH_REQUIRED
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: FORBIDDEN
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: NOT_FOUND
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: CONFLICT
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: INTERNAL_ERROR
+      security:
+      - Bearer: []
+      summary: Update public skill (admin)
+      tags:
+      - admin_skill
+  /admin/skills/{skill_id}/download:
+    get:
+      description: Return a presigned artifact URL for a public Skill, or redirect
+        to it unless format=json is requested.
+      operationId: admin_skill.download
+      parameters:
+      - description: Skill ID
+        in: path
+        name: skill_id
+        required: true
+        schema:
+          type: string
+      - description: Use json to return the download URL
+        in: query
+        name: format
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Data-internal_api_handler_upload_DownloadResponse'
+          description: OK
+        "302":
+          description: Redirect to artifact
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: AUTH_REQUIRED
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: FORBIDDEN
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: NOT_FOUND
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: INTERNAL_ERROR
+      security:
+      - Bearer: []
+      summary: Download public Skill archive (admin)
+      tags:
+      - admin_skill
+  /admin/skills/{skill_id}/reupload:
+    post:
+      description: Upload a new zip to update the skill version.
+      operationId: admin_skill.reupload
+      parameters:
+      - description: Skill ID
+        in: path
+        name: skill_id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/internal_api_handler_skill.AdminReuploadRequest'
+                description: Reupload params
+                summary: body
+        description: Reupload params
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Data-github_com_Mininglamp-OSS_octo-marketplace_internal_service_skill_SkillItem'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: VALIDATION_ERROR
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: AUTH_REQUIRED
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: FORBIDDEN
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: NOT_FOUND
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: CONFLICT
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: INTERNAL_ERROR
+      security:
+      - Bearer: []
+      summary: Reupload public skill version (admin)
+      tags:
+      - admin_skill
+  /admin/skills/{skill_id}/skill_md:
+    get:
+      description: Return SKILL.md for a public skill without Space restriction.
+      operationId: admin_skill.skillmd.get
+      parameters:
+      - description: Skill ID
+        in: path
+        name: skill_id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Data-internal_api_handler_skill_SkillMDResponse'
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: AUTH_REQUIRED
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: FORBIDDEN
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: NOT_FOUND
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: INTERNAL_ERROR
+      security:
+      - Bearer: []
+      summary: Get SKILL.md (admin)
+      tags:
+      - admin_skill
+  /bot/skills/publish:
+    post:
+      description: Parse an uploaded Skill archive synchronously through the bounded
+        worker pool, then create a Skill owned by the bot owner.
+      operationId: bot_skill.publish
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/internal_api_handler_upload.BotPublishSkillRequest'
+                description: Bot publish request
+                summary: body
+        description: Bot publish request
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Data-github_com_Mininglamp-OSS_octo-marketplace_internal_service_skill_SkillItem'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: VALIDATION_ERROR
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: AUTH_REQUIRED
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: FORBIDDEN
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: NOT_FOUND
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: CONFLICT
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: INTERNAL_ERROR
+      security:
+      - Bearer: []
+      summary: Publish Skill as bot
+      tags:
+      - skill_upload
   /mcp_categories:
     get:
       description: Return MCP category keys and visible record counts for the current
@@ -1944,6 +2752,108 @@ paths:
       summary: List owned MCP servers
       tags:
       - mcp
+  /metrics/track:
+    post:
+      description: Record a view event for a visible marketplace resource.
+      operationId: metrics.track
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/internal_api_handler_metrics.trackRequest'
+                description: Metric event
+                summary: body
+        description: Metric event
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Data-github_com_Mininglamp-OSS_octo-marketplace_internal_api_response_EmptyResp'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: VALIDATION_ERROR
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: AUTH_REQUIRED
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: FORBIDDEN
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: NOT_FOUND
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: INTERNAL_ERROR
+      security:
+      - Bearer: []
+      summary: Track metric event
+      tags:
+      - metrics
+  /session:
+    get:
+      description: Return the authenticated user identity and active Space context.
+      operationId: session.get
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Data-internal_api_handler_SessionResponse'
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: AUTH_REQUIRED
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: FORBIDDEN
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: NOT_FOUND
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: INTERNAL_ERROR
+      security:
+      - Bearer: []
+      summary: Get current session
+      tags:
+      - session
   /skill_categories:
     get:
       description: Return all Skill categories and their visible Skill counts.
@@ -2235,7 +3145,7 @@ paths:
       - skill_upload
   /skills:
     get:
-      description: List skills visible in the current Space using cursor pagination.
+      description: List skills visible in the current Space with sort and pagination.
       operationId: skill.list
       parameters:
       - description: Search query
@@ -2260,11 +3170,21 @@ paths:
           items:
             type: string
           type: array
-      - description: Cursor for next page
+      - description: 'Sort mode: comprehensive (default), latest, downloads, views'
+        in: query
+        name: sort
+        schema:
+          type: string
+      - description: Cursor for next page (latest sort only)
         in: query
         name: cursor
         schema:
           type: string
+      - description: Offset for pagination (comprehensive/downloads/views)
+        in: query
+        name: offset
+        schema:
+          type: integer
       - description: Page size, default 20, max 50
         in: query
         name: page_size
@@ -2282,6 +3202,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.CursorList-internal_api_handler_skill_SkillResponse'
           description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: VALIDATION_ERROR
         "401":
           content:
             application/json:
@@ -2677,6 +3603,59 @@ paths:
       summary: Initialize Skill reupload
       tags:
       - skill_upload
+  /skills/{skill_id}/skill_md:
+    get:
+      description: Return the SKILL.md content for the current version of a visible
+        Skill.
+      operationId: skill.skillmd.get
+      parameters:
+      - description: Skill ID
+        in: path
+        name: skill_id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Data-internal_api_handler_skill_SkillMDResponse'
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: AUTH_REQUIRED
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: FORBIDDEN
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: NOT_FOUND
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: INTERNAL_ERROR
+      security:
+      - Bearer: []
+      summary: Get SKILL.md
+      tags:
+      - skill
   /skills/{skill_id}/versions:
     get:
       description: List immutable release history for one visible Skill.
@@ -2842,6 +3821,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
           description: FORBIDDEN
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: NOT_FOUND
         "500":
           content:
             application/json:
@@ -2862,7 +3847,13 @@ tags:
   name: skill_upload
 - description: Skill catalog categories
   name: skill_category
+- description: Administrative Skill catalog
+  name: admin_skill
 - description: MCP server catalog
   name: mcp
 - description: Administrative MCP catalog
   name: admin_mcp
+- description: Current authenticated user context
+  name: session
+- description: Marketplace interaction metrics
+  name: metrics

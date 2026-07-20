@@ -119,8 +119,18 @@ func TestSessionUsesDevelopmentIdentity(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status=%d want=%d", recorder.Code, http.StatusOK)
 	}
-	if body := recorder.Body.String(); body != "{\"name\":\"Developer\",\"space_id\":\"dev-space\",\"uid\":\"dev-user\"}" {
-		t.Fatalf("body=%q", body)
+	var body struct {
+		Data struct {
+			Name    string `json:"name"`
+			SpaceID string `json:"space_id"`
+			UID     string `json:"uid"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Data.Name != "Developer" || body.Data.SpaceID != "dev-space" || body.Data.UID != "dev-user" {
+		t.Fatalf("body=%q", recorder.Body.String())
 	}
 }
 

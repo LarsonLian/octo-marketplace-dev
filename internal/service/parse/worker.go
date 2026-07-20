@@ -76,8 +76,31 @@ func (w *Worker) Submit(taskID, objectKey string, maxZipBytes int64) {
 		w.sem <- struct{}{}
 		defer func() { <-w.sem }()
 
-		w.process(taskID, objectKey, maxZipBytes)
+		w.process(context.Background(), taskID, objectKey, maxZipBytes)
 	}()
+}
+
+// ProcessSync runs a parse job in the bounded worker pool and waits for it to finish.
+func (w *Worker) ProcessSync(ctx context.Context, taskID, objectKey string, maxZipBytes int64) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case w.sem <- struct{}{}:
+		defer func() { <-w.sem }()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[parse-worker] panic recovered for task %s: %v", taskID, r)
+			w.updateFailed(taskID, "INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	w.process(ctx, taskID, objectKey, maxZipBytes)
+	return nil
 }
 
 // Wait blocks until all running parse jobs complete. Used for graceful shutdown.
@@ -85,8 +108,11 @@ func (w *Worker) Wait() {
 	w.wg.Wait()
 }
 
-func (w *Worker) process(taskID, objectKey string, maxZipBytes int64) {
-	ctx, cancel := context.WithTimeout(context.Background(), w.parseTimeout)
+func (w *Worker) process(parent context.Context, taskID, objectKey string, maxZipBytes int64) {
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, w.parseTimeout)
 	defer cancel()
 
 	// 1. Download zip from storage to a temp file

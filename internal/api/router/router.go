@@ -89,18 +89,7 @@ func publicWithOptions(database Pinger, authenticator *marketmiddleware.Authenti
 
 	v1 := r.Group("/api/v1")
 	v1.Use(authenticator.Handler())
-	v1.GET("/session", func(c *gin.Context) {
-		identity, ok := marketmiddleware.Identity(c)
-		if !ok {
-			c.JSON(http.StatusInternalServerError, gin.H{"status": "error"})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{
-			"uid":      identity.UID,
-			"name":     identity.Name,
-			"space_id": marketmiddleware.SpaceID(c),
-		})
-	})
+	handler.NewSession().Register(v1)
 
 	// Wire up skill marketplace handlers when we have a real *sql.DB.
 	// adminMcpIcon carries the MCP icon-upload handler across the closure
