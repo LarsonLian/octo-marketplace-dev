@@ -211,7 +211,7 @@ func (r *Repository) List(ctx context.Context, f ListFilter) ([]model.MCP, int, 
 
 	pageWhere := where
 	pageArgs := append([]any{}, args...)
-	orderBy := "updated_at DESC, id DESC"
+	orderBy := "created_at DESC, id DESC"
 	if f.Sort == "verified" {
 		orderBy = "verified_at DESC, updated_at DESC, id DESC"
 	}
@@ -344,7 +344,7 @@ func (f ListFilter) buildWhere() (string, []any) {
 			case "system":
 				parts = append(parts, "visibility = 'system'")
 			case "mine":
-				parts = append(parts, "owner_uid = ?")
+				parts = append(parts, "owner_uid = ? AND visibility <> 'system'")
 				args = append(args, f.CallerUID)
 			case "space":
 				parts = append(parts, "visibility <> 'system' AND space_id = ?")

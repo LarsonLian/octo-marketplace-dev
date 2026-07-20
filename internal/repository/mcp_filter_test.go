@@ -31,3 +31,17 @@ func TestRelevanceOrderCoversEverySearchableField(t *testing.T) {
 		t.Fatalf("ranking args = %d, want 7", len(args))
 	}
 }
+
+// TestSourceMineExcludesSystemRows guards the filter/label consistency:
+// source=mine must never surface a system-visibility row (which enrichment
+// would relabel as source=system), even when owner_uid matches the caller.
+func TestSourceMineExcludesSystemRows(t *testing.T) {
+	where, args := (ListFilter{CallerUID: "u1", SpaceID: "s1", Sources: []string{"mine"}}).buildWhere()
+	if !strings.Contains(where, "owner_uid = ? AND visibility <> 'system'") {
+		t.Fatalf("source=mine must exclude system-visibility rows: %s", where)
+	}
+	want := []any{"s1", "u1", "u1"}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("args = %#v, want %#v", args, want)
+	}
+}
