@@ -109,10 +109,16 @@ const defaultIconMaxBytes = 2 << 20 // 2 MiB
 
 // ListParams carries the query parameters for the two list endpoints.
 type ListParams struct {
-	Keyword  string
-	Category string
-	Limit    int
-	Offset   int
+	Keyword              string
+	Categories           []string
+	Tags                 []string
+	Transports           []string
+	Visibilities         []string
+	Sources              []string
+	VerificationStatuses []string
+	Sort                 string
+	Limit                int
+	Offset               int
 }
 
 // Create validates + normalizes a flat create body, redacts secrets, stamps
@@ -290,7 +296,8 @@ func (s *Service) CreateSystem(ctx context.Context, caller Caller, req model.Cre
 func (s *Service) ListSystem(ctx context.Context, p ListParams) (model.ListResponse, *apierr.Error) {
 	filter := repository.ListFilter{
 		Keyword:    p.Keyword,
-		Category:   p.Category,
+		Categories: p.Categories, Tags: p.Tags, Transports: p.Transports,
+		Visibilities: p.Visibilities, Sources: p.Sources, VerificationStatuses: p.VerificationStatuses, Sort: p.Sort,
 		Limit:      clampLimit(p.Limit),
 		Offset:     clampOffset(p.Offset),
 		SystemOnly: true,
@@ -301,7 +308,9 @@ func (s *Service) ListSystem(ctx context.Context, p ListParams) (model.ListRespo
 	}
 	items := make([]model.ListItem, 0, len(records))
 	for i := range records {
-		items = append(items, records[i].ToListItem())
+		item := records[i].ToListItem()
+		enrichListItem(&item, &records[i], p.Keyword, "")
+		items = append(items, item)
 	}
 	if cats == nil {
 		cats = []model.CategoryFilter{{Key: model.CategoryKeyAll, Count: total}}
@@ -461,13 +470,14 @@ func (s *Service) buildSystemFromCreate(caller Caller, req model.CreateRequest) 
 
 func (s *Service) list(ctx context.Context, caller Caller, p ListParams, mineOnly bool) (model.ListResponse, *apierr.Error) {
 	filter := repository.ListFilter{
-		CallerUID: caller.UID,
-		SpaceID:   caller.SpaceID,
-		Keyword:   p.Keyword,
-		Category:  p.Category,
-		Limit:     clampLimit(p.Limit),
-		Offset:    clampOffset(p.Offset),
-		MineOnly:  mineOnly,
+		CallerUID:  caller.UID,
+		SpaceID:    caller.SpaceID,
+		Keyword:    p.Keyword,
+		Categories: p.Categories, Tags: p.Tags, Transports: p.Transports,
+		Visibilities: p.Visibilities, Sources: p.Sources, VerificationStatuses: p.VerificationStatuses, Sort: p.Sort,
+		Limit:    clampLimit(p.Limit),
+		Offset:   clampOffset(p.Offset),
+		MineOnly: mineOnly,
 	}
 	records, total, cats, err := s.store.List(ctx, filter)
 	if err != nil {
@@ -475,12 +485,62 @@ func (s *Service) list(ctx context.Context, caller Caller, p ListParams, mineOnl
 	}
 	items := make([]model.ListItem, 0, len(records))
 	for i := range records {
-		items = append(items, records[i].ToListItem())
+		item := records[i].ToListItem()
+		enrichListItem(&item, &records[i], p.Keyword, caller.UID)
+		items = append(items, item)
 	}
 	if cats == nil {
 		cats = []model.CategoryFilter{{Key: model.CategoryKeyAll, Count: total}}
 	}
 	return model.ListResponse{Items: items, Total: total, Categories: cats}, nil
+}
+
+func enrichListItem(item *model.ListItem, m *model.MCP, keyword, callerUID string) {
+	if m.Visibility == model.VisibilitySystem {
+		item.Source = "system"
+	} else if m.OwnerUID == callerUID {
+		item.Source = "mine"
+	} else {
+		item.Source = "space"
+	}
+	kw := strings.ToLower(strings.TrimSpace(keyword))
+	if kw == "" {
+		return
+	}
+	add := func(reason string, score int) {
+		item.MatchReasons = append(item.MatchReasons, reason)
+		item.Relevance += score
+	}
+	if strings.Contains(strings.ToLower(m.Name), kw) {
+		add("name", 8)
+	}
+	if strings.Contains(strings.ToLower(m.Slogan), kw) {
+		add("description", 2)
+	}
+	if strings.Contains(strings.ToLower(m.Category), kw) {
+		add("category", 3)
+	}
+	for _, tag := range m.Tags {
+		if strings.Contains(strings.ToLower(tag), kw) {
+			add("tag:"+tag, 6)
+			break
+		}
+	}
+	for _, tool := range m.Tools {
+		if strings.Contains(strings.ToLower(tool.Name), kw) || strings.Contains(strings.ToLower(tool.Description), kw) {
+			add("tool:"+tool.Name, 7)
+			break
+		}
+	}
+	for _, example := range m.UsageExamples {
+		if strings.Contains(strings.ToLower(example), kw) {
+			add("usage_example", 1)
+			break
+		}
+	}
+	if strings.Contains(strings.ToLower(m.CreatorName), kw) {
+		add("creator:"+m.CreatorName, 1)
+	}
 }
 
 // loadVisible loads a record and applies the read visibility rule (doc §4.4):

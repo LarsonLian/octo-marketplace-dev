@@ -654,7 +654,7 @@ func TestListSystemFilterSetsSystemOnlyAndSkipsSpace(t *testing.T) {
 	store := newFakeStore()
 	svc := New(store)
 
-	_, apiErr := svc.ListSystem(context.Background(), ListParams{Category: "dev"})
+	_, apiErr := svc.ListSystem(context.Background(), ListParams{Categories: []string{"dev"}})
 	if apiErr != nil {
 		t.Fatalf("unexpected error: %v", apiErr)
 	}
@@ -668,7 +668,7 @@ func TestListSystemFilterSetsSystemOnlyAndSkipsSpace(t *testing.T) {
 	if store.lastFilter.SpaceID != "" || store.lastFilter.CallerUID != "" {
 		t.Fatalf("ListSystem should not pass caller/space (filter: %+v)", store.lastFilter)
 	}
-	if store.lastFilter.Category != "dev" {
+	if len(store.lastFilter.Categories) != 1 || store.lastFilter.Categories[0] != "dev" {
 		t.Fatalf("ListSystem must honor category filter")
 	}
 }

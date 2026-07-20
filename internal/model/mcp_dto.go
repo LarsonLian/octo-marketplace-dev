@@ -109,15 +109,22 @@ type Detail struct {
 
 // ListItem is the projection used by GET /mcps and GET /mcps/mine (doc §3.2).
 type ListItem struct {
-	ID          string     `json:"mcp_id"`
-	Name        string     `json:"name"`
-	Slogan      string     `json:"slogan"`
-	Category    string     `json:"category"`
-	Icon        string     `json:"icon"`
-	Tags        []string   `json:"tags"`
-	ToolCount   int        `json:"tool_count"`
-	Visibility  Visibility `json:"visibility"`
-	CreatorName string     `json:"creator_name"`
+	ID                 string     `json:"mcp_id"`
+	Name               string     `json:"name"`
+	Slogan             string     `json:"slogan"`
+	Category           string     `json:"category"`
+	Icon               string     `json:"icon"`
+	Tags               []string   `json:"tags"`
+	ToolCount          int        `json:"tool_count"`
+	Visibility         Visibility `json:"visibility"`
+	CreatorName        string     `json:"creator_name"`
+	Source             string     `json:"source"`
+	Transport          Transport  `json:"transport"`
+	VerificationStatus string     `json:"verification_status"`
+	VerifiedAt         *string    `json:"verified_at,omitempty"`
+	UpdatedAt          string     `json:"updated_at"`
+	MatchReasons       []string   `json:"match_reasons,omitempty"`
+	Relevance          int        `json:"relevance,omitempty"`
 }
 
 // CategoryFilter is one filter pill with its live count (doc §4.2). Labels are
@@ -174,6 +181,11 @@ func (m *MCP) ToDetail() Detail {
 
 // ToListItem projects a domain MCP onto the list-card wire shape.
 func (m *MCP) ToListItem() ListItem {
+	var verifiedAt *string
+	if m.VerifiedAt != nil {
+		value := m.VerifiedAt.UTC().Format(time.RFC3339)
+		verifiedAt = &value
+	}
 	return ListItem{
 		ID:          m.ID,
 		Name:        m.Name,
@@ -184,6 +196,8 @@ func (m *MCP) ToListItem() ListItem {
 		ToolCount:   len(m.Tools),
 		Visibility:  m.Visibility,
 		CreatorName: m.CreatorName,
+		Transport:   m.Transport, VerificationStatus: m.VerificationStatus,
+		VerifiedAt: verifiedAt, UpdatedAt: m.UpdatedAt.UTC().Format(time.RFC3339),
 	}
 }
 

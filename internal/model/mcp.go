@@ -98,23 +98,25 @@ type MCP struct {
 	// mcpServers snippets (mcp-v1.md §3). Unique per Space among live rows
 	// (see migration 03). Never empty on persisted rows — the service
 	// auto-derives it from Name when the request omits it.
-	Slug          string
-	Slogan        string
-	Category      string
-	Icon          string
-	IconVersion   int
-	Tags          []string
-	Tools         []Tool
-	UsageExamples []string
-	FAQs          []FAQ
-	Notes         []string
-	Visibility    Visibility
-	OwnerUID      string
-	SpaceID       string // empty string means NULL (system rows)
-	CreatorName   string
-	Transport     Transport
-	Connection    Connection
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
-	DeletedAt     *time.Time
+	Slug               string
+	Slogan             string
+	Category           string
+	Icon               string
+	IconVersion        int
+	Tags               []string
+	Tools              []Tool
+	UsageExamples      []string
+	FAQs               []FAQ
+	Notes              []string
+	Visibility         Visibility
+	OwnerUID           string
+	SpaceID            string // empty string means NULL (system rows)
+	CreatorName        string
+	Transport          Transport
+	VerificationStatus string
+	VerifiedAt         *time.Time
+	Connection         Connection
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+	DeletedAt          *time.Time
 }

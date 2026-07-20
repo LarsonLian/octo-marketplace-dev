@@ -85,6 +85,12 @@ func (h *MCP) Create(c *gin.Context) {
 // @Security Bearer
 // @Param keyword query string false "Search keyword"
 // @Param category query string false "Category key"
+// @Param transport query []string false "Transport filters"
+// @Param visibility query []string false "Visibility filters"
+// @Param source query []string false "Source filters: system, space, mine"
+// @Param verification_status query []string false "Verification filters"
+// @Param tag query []string false "Tag filters"
+// @Param sort query string false "Sort: relevance, updated, verified"
 // @Param page query int false "Page number, default 1"
 // @Param page_size query int false "Page size, default 20, max 100"
 // @Success 200 {object} apiresponse.OffsetList[model.ListItem]
@@ -105,6 +111,12 @@ func (h *MCP) List(c *gin.Context) { h.list(c, false) }
 // @Security Bearer
 // @Param keyword query string false "Search keyword"
 // @Param category query string false "Category key"
+// @Param transport query []string false "Transport filters"
+// @Param visibility query []string false "Visibility filters"
+// @Param source query []string false "Source filters: system, space, mine"
+// @Param verification_status query []string false "Verification filters"
+// @Param tag query []string false "Tag filters"
+// @Param sort query string false "Sort: relevance, updated, verified"
 // @Param page query int false "Page number, default 1"
 // @Param page_size query int false "Page size, default 20, max 100"
 // @Success 200 {object} apiresponse.OffsetList[model.ListItem]
@@ -354,12 +366,31 @@ func listParams(c *gin.Context) (service.ListParams, int, int) {
 	if pageSize > 100 {
 		pageSize = 100
 	}
+	categories := splitQuery(c.QueryArray("category"))
 	return service.ListParams{
-		Keyword:  strings.TrimSpace(c.Query("keyword")),
-		Category: strings.TrimSpace(c.Query("category")),
-		Limit:    pageSize,
-		Offset:   (page - 1) * pageSize,
+		Keyword:              strings.TrimSpace(c.Query("keyword")),
+		Categories:           categories,
+		Tags:                 splitQuery(c.QueryArray("tag")),
+		Transports:           splitQuery(c.QueryArray("transport")),
+		Visibilities:         splitQuery(c.QueryArray("visibility")),
+		Sources:              splitQuery(c.QueryArray("source")),
+		VerificationStatuses: splitQuery(c.QueryArray("verification_status")),
+		Sort:                 strings.TrimSpace(c.Query("sort")),
+		Limit:                pageSize,
+		Offset:               (page - 1) * pageSize,
 	}, page, pageSize
+}
+
+func splitQuery(values []string) []string {
+	var result []string
+	for _, value := range values {
+		for _, item := range strings.Split(value, ",") {
+			if item = strings.TrimSpace(item); item != "" && item != model.CategoryKeyAll {
+				result = append(result, item)
+			}
+		}
+	}
+	return result
 }
 
 func positiveInt(value string, fallback int) int {
