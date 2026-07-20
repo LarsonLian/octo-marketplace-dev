@@ -1,9 +1,6 @@
 package model
 
-import (
-	"encoding/json"
-	"time"
-)
+import "time"
 
 // Skill visibility values (Public/Private/Space) share the Visibility type
 // defined in mcp.go; see mcp.go for the full set of constants.
@@ -21,25 +18,25 @@ type SkillVersion struct {
 
 // Skill represents a published marketplace skill.
 type Skill struct {
-	ID               string          `json:"skill_id"`
-	Name             string          `json:"name"`
-	DisplayName      string          `json:"display_name"`
-	IconURL          string          `json:"icon_url"`
-	SourceSkillID    string          `json:"source_skill_id"`
-	CurrentVersionID string          `json:"current_version_id"`
-	Description      string          `json:"description"`
-	CategoryID       string          `json:"category_id"`
-	Tags             json.RawMessage `json:"tags"`
-	OwnerName        string          `json:"owner_name"`
-	CreatorID        string          `json:"creator_id"`
-	CreatorName      string          `json:"creator_name"`
-	Visibility       Visibility      `json:"visibility"`
-	Version          string          `json:"version"`
-	ReadmeContent    string          `json:"readme_content"`
-	FileName         string          `json:"file_name"`
-	FileSize         int64           `json:"file_size"`
-	CreatedAt        time.Time       `json:"created_at"`
-	UpdatedAt        time.Time       `json:"updated_at"`
+	ID               string     `json:"skill_id"`
+	Name             string     `json:"name"`
+	DisplayName      string     `json:"display_name"`
+	IconURL          string     `json:"icon_url"`
+	SourceSkillID    string     `json:"source_skill_id"`
+	CurrentVersionID string     `json:"current_version_id"`
+	Description      string     `json:"description"`
+	CategoryID       string     `json:"category_id"`
+	Tags             []string   `json:"tags"`
+	OwnerName        string     `json:"owner_name"`
+	CreatorID        string     `json:"creator_id"`
+	CreatorName      string     `json:"creator_name"`
+	Visibility       Visibility `json:"visibility"`
+	Version          string     `json:"version"`
+	ReadmeContent    string     `json:"readme_content"`
+	FileName         string     `json:"file_name"`
+	FileSize         int64      `json:"file_size"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
 }
 
 // VersionStorage describes where a skill version's artifacts are stored.

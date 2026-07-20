@@ -329,8 +329,8 @@ func TestAdminUpdate_UpsertsGlobalTags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if string(item.Tags) != `["official"]` {
-		t.Fatalf("tags = %s", item.Tags)
+	if len(item.Tags) != 1 || item.Tags[0] != "official" {
+		t.Fatalf("tags = %v", item.Tags)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

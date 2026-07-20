@@ -239,7 +239,9 @@ func (s *Service) ParseUploadSync(ctx context.Context, uploadID, ownerID string)
 	}
 
 	maxBytes := int64(s.maxMB) * 1024 * 1024
-	s.worker.process(task.ID, task.FileURL, maxBytes)
+	if err := s.worker.ProcessSync(ctx, task.ID, task.FileURL, maxBytes); err != nil {
+		return nil, err
+	}
 	return s.GetParseStatus(ctx, task.ID, ownerID)
 }
 

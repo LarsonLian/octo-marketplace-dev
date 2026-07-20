@@ -100,8 +100,23 @@ func (h *Handler) RegisterLocalProxy(r *gin.Engine, authEnabled ...bool) {
 	r.GET("/api/v1/_storage/download/*key", localProxyLoopbackOnly, h.localDownloadProxy)
 }
 
-// BotPublishSkill handles Bot one-step Skill publishing:
-// presigned upload -> synchronous parse -> create Skill.
+// BotPublishSkill godoc
+// @Summary Publish Skill as bot
+// @Description Parse an uploaded Skill archive synchronously through the bounded worker pool, then create a Skill owned by the bot owner.
+// @Tags skill_upload
+// @ID bot_skill.publish
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param body body BotPublishSkillRequest true "Bot publish request"
+// @Success 201 {object} apiresponse.Data[skillsvc.SkillItem]
+// @Failure 400 {object} apiresponse.Error "VALIDATION_ERROR"
+// @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
+// @Failure 404 {object} apiresponse.Error "NOT_FOUND"
+// @Failure 409 {object} apiresponse.Error "CONFLICT"
+// @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
+// @Router /bot/skills/publish [post]
 func (h *Handler) BotPublishSkill(c *gin.Context) {
 	if h.parseSvc == nil || h.skillSvc == nil {
 		apiresponse.Fail(c, http.StatusServiceUnavailable, errcode.InternalError, "skill publishing is unavailable", nil, "")
@@ -145,11 +160,7 @@ func (h *Handler) BotPublishSkill(c *gin.Context) {
 		return
 	}
 
-	tags, err := normalizePublishTags(req.Tags)
-	if err != nil {
-		apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "tags must be a JSON string array", nil, "")
-		return
-	}
+	tags := marshalPublishTags(req.Tags)
 	result, err := h.parseSvc.ParseUploadSync(c.Request.Context(), uploadID, identity.UID)
 	if err != nil {
 		if errors.Is(err, parse.ErrTaskNotFound) || errors.Is(err, parse.ErrForbidden) {
@@ -222,19 +233,19 @@ func (h *Handler) BotPublishSkill(c *gin.Context) {
 }
 
 type BotPublishSkillRequest struct {
-	SkillUploadID string          `json:"skill_upload_id"`
-	UploadURL     string          `json:"upload_url"`
-	PresignedURL  string          `json:"presigned_url"`
-	PublishMode   string          `json:"publish_mode"`
-	Name          string          `json:"name"`
-	DisplayName   string          `json:"display_name"`
-	IconURL       string          `json:"icon_url"`
-	Description   string          `json:"description"`
-	CategoryID    string          `json:"category_id"`
-	Tags          json.RawMessage `json:"tags"`
-	Visibility    string          `json:"visibility"`
-	Version       string          `json:"version"`
-	Changelog     string          `json:"changelog"`
+	SkillUploadID string   `json:"skill_upload_id"`
+	UploadURL     string   `json:"upload_url"`
+	PresignedURL  string   `json:"presigned_url"`
+	PublishMode   string   `json:"publish_mode"`
+	Name          string   `json:"name"`
+	DisplayName   string   `json:"display_name"`
+	IconURL       string   `json:"icon_url"`
+	Description   string   `json:"description"`
+	CategoryID    string   `json:"category_id"`
+	Tags          []string `json:"tags"`
+	Visibility    string   `json:"visibility"`
+	Version       string   `json:"version"`
+	Changelog     string   `json:"changelog"`
 }
 
 func (h *Handler) botIdentity(c *gin.Context, identity model.Identity) (model.BotIdentity, bool) {
@@ -282,6 +293,14 @@ func normalizePublishTags(input json.RawMessage) (json.RawMessage, error) {
 	}
 	out, _ := json.Marshal(tags)
 	return out, nil
+}
+
+func marshalPublishTags(tags []string) json.RawMessage {
+	if tags == nil {
+		return nil
+	}
+	out, _ := json.Marshal(tags)
+	return out
 }
 
 func uploadIDFromLink(link string) string {
@@ -622,7 +641,23 @@ func (h *Handler) Download(c *gin.Context) {
 	c.Redirect(http.StatusFound, info.DownloadURL)
 }
 
-// AdminDownload returns a presigned download URL for a public skill (admin-only).
+// AdminDownload godoc
+// @Summary Download public Skill archive (admin)
+// @Description Return a presigned artifact URL for a public Skill, or redirect to it unless format=json is requested.
+// @Tags admin_skill
+// @ID admin_skill.download
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param skill_id path string true "Skill ID"
+// @Param format query string false "Use json to return the download URL"
+// @Success 200 {object} apiresponse.Data[DownloadResponse]
+// @Success 302 "Redirect to artifact"
+// @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
+// @Failure 404 {object} apiresponse.Error "NOT_FOUND"
+// @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
+// @Router /admin/skills/{skill_id}/download [get]
 func (h *Handler) AdminDownload(c *gin.Context) {
 	if _, ok := middleware.Identity(c); !ok {
 		apiresponse.Fail(c, http.StatusUnauthorized, errcode.Unauthorized, "authentication is required", nil, "")

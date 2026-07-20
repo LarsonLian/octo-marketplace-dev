@@ -14,7 +14,7 @@ const (
 	Conflict         = "CONFLICT"
 
 	// Metrics error codes.
-	MetricsUnsupportedEvent    = "METRICS_UNSUPPORTED_EVENT"
-	MetricsUnsupportedResource = "METRICS_UNSUPPORTED_RESOURCE"
-	MetricsResourceNotVisible  = "METRICS_RESOURCE_NOT_VISIBLE"
+	MetricsUnsupportedEvent    = BadRequest
+	MetricsUnsupportedResource = BadRequest
+	MetricsResourceNotVisible  = NotFound
 )

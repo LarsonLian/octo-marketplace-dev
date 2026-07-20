@@ -85,8 +85,11 @@ func TestTrack_Success(t *testing.T) {
 		"resource_id":   "skill-123",
 		"event_type":    "view",
 	})
-	if w.Code != http.StatusNoContent {
-		t.Fatalf("expected 204, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if body := w.Body.String(); body != "{\"data\":{}}" {
+		t.Fatalf("body=%q", body)
 	}
 }
 
@@ -142,12 +145,12 @@ func TestTrack_ResourceNotVisible(t *testing.T) {
 		"resource_id":   "nonexistent",
 		"event_type":    "view",
 	})
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
-func TestTrack_RedisFailure_Still204(t *testing.T) {
+func TestTrack_RedisFailure_StillOK(t *testing.T) {
 	r := setupTestRouter(errors.New("redis down"))
 	defer metricssvc.ResetResolvers()
 
@@ -156,8 +159,8 @@ func TestTrack_RedisFailure_Still204(t *testing.T) {
 		"resource_id":   "skill-123",
 		"event_type":    "view",
 	})
-	if w.Code != http.StatusNoContent {
-		t.Fatalf("expected 204 even with Redis failure, got %d", w.Code)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 even with Redis failure, got %d", w.Code)
 	}
 }
 
