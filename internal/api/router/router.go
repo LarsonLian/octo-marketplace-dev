@@ -134,6 +134,7 @@ func publicWithOptions(database Pinger, authenticator *marketmiddleware.Authenti
 
 		catSvc := categorysvc.New(catRepo)
 		skSvc := skillsvc.New(skRepo, catRepo, store, generateID)
+		skSvc.SetMaxArchiveBytes(int64(storageCfg.MaxMB) << 20)
 
 		catH := categoryhandler.New(catSvc)
 		catH.Register(v1)

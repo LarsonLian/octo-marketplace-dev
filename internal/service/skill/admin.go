@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"time"
 
 	"github.com/Mininglamp-OSS/octo-marketplace/internal/model"
@@ -142,15 +141,9 @@ func (s *Service) AdminCreate(ctx context.Context, p AdminCreateParams) (*SkillI
 	id := s.idGen()
 	versionID := s.idGen()
 
-	// Download the temporary zip from object storage
-	zipReader, err := s.store.GetObject(ctx, pt.FileURL)
+	zipData, err := s.readVerifiedTempZip(ctx, pt)
 	if err != nil {
-		return nil, fmt.Errorf("download temp zip: %w", err)
-	}
-	zipData, err := io.ReadAll(zipReader)
-	zipReader.Close()
-	if err != nil {
-		return nil, fmt.Errorf("read temp zip: %w", err)
+		return nil, err
 	}
 
 	// Build raw metadata from parse task for vendor field preservation
@@ -179,9 +172,7 @@ func (s *Service) AdminCreate(ctx context.Context, p AdminCreateParams) (*SkillI
 		return nil, fmt.Errorf("rewrite zip: %w", err)
 	}
 
-	// Compute object keys
-	zipObjectKey := fmt.Sprintf("skills/%s/v%s/skill.zip", id, version)
-	skillMdObjectKey := fmt.Sprintf("skills/%s/v%s/SKILL.md", id, version)
+	zipObjectKey, skillMdObjectKey := versionObjectKeys(id, versionID)
 
 	// PutObject: upload rewritten zip
 	if err := s.store.PutObject(ctx, zipObjectKey, bytes.NewReader(rewriteResult.ZipBytes), rewriteResult.ZipSize, "application/zip"); err != nil {
@@ -368,7 +359,7 @@ func (s *Service) AdminGetSkillMD(ctx context.Context, id string) ([]byte, error
 	}
 	defer reader.Close()
 
-	data, err := io.ReadAll(reader)
+	data, err := readLimited(reader, maxSkillMDReadBytes)
 	if err != nil {
 		return nil, fmt.Errorf("read skill md: %w", err)
 	}
@@ -435,15 +426,9 @@ func (s *Service) AdminReupload(ctx context.Context, id string, p AdminReuploadP
 		repoParams.TagNames = tagNames
 	}
 
-	// Download the temporary zip from object storage
-	zipReader, err := s.store.GetObject(ctx, pt.FileURL)
+	zipData, err := s.readVerifiedTempZip(ctx, pt)
 	if err != nil {
-		return nil, fmt.Errorf("download temp zip: %w", err)
-	}
-	zipData, err := io.ReadAll(zipReader)
-	zipReader.Close()
-	if err != nil {
-		return nil, fmt.Errorf("read temp zip: %w", err)
+		return nil, err
 	}
 
 	// Build raw metadata from parse task
@@ -483,9 +468,8 @@ func (s *Service) AdminReupload(ctx context.Context, id string, p AdminReuploadP
 		return nil, fmt.Errorf("rewrite zip: %w", err)
 	}
 
-	// Compute object keys
-	zipObjectKey := fmt.Sprintf("skills/%s/v%s/skill.zip", id, version)
-	skillMdObjectKey := fmt.Sprintf("skills/%s/v%s/SKILL.md", id, version)
+	versionID := s.idGen()
+	zipObjectKey, skillMdObjectKey := versionObjectKeys(id, versionID)
 
 	// PutObject: upload rewritten zip
 	if err := s.store.PutObject(ctx, zipObjectKey, bytes.NewReader(rewriteResult.ZipBytes), rewriteResult.ZipSize, "application/zip"); err != nil {
@@ -520,8 +504,6 @@ func (s *Service) AdminReupload(ctx context.Context, id string, p AdminReuploadP
 	repoParams.FileSHA256 = &rewriteResult.ZipSHA256
 	repoParams.FileURL = &zipObjectKey
 
-	// Generate version ID and set current_version_id on the skill update
-	versionID := s.idGen()
 	repoParams.CurrentVersionID = &versionID
 
 	// Transactionally: consume parse task, update skill, and insert version
