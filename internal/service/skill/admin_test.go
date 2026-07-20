@@ -3,6 +3,7 @@ package skill
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -92,6 +93,68 @@ func TestAdminGet_AcceptsPublic(t *testing.T) {
 	}
 	if item.Visibility != "public" {
 		t.Fatalf("expected visibility=public, got %s", item.Visibility)
+	}
+}
+
+func TestAdminReuploadNameMismatchDeletesTempObject(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	store := &fakeStorage{}
+	svc := New(skillrepo.New(db), categoryrepo.New(db), store, func() string { return "id" })
+	now := time.Now()
+
+	mock.ExpectQuery("SELECT .+ FROM skills").
+		WithArgs("admin-skill").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "name", "display_name", "icon_url", "source_skill_id", "current_version_id",
+			"description", "category_id", "tags",
+			"owner_id", "owner_name", "space_id", "visibility", "version",
+			"readme_content", "file_name", "file_url", "file_size", "file_sha256",
+			"created_at", "updated_at",
+			"resolved_version", "version_storage",
+			"view_count", "download_count",
+		}).AddRow(
+			"admin-skill", "octo-style", "octo-style", "", "", "v1",
+			"desc", "cat1", []byte(`[]`),
+			"owner-1", "Owner", "", "public", "1.0.0",
+			"", "skill.zip", "skills/admin-skill/v1.0.0/skill.zip", int64(1024), "sha",
+			now, now,
+			"1.0.0", "",
+			int64(0), int64(0),
+		))
+	mock.ExpectQuery("SELECT .+ FROM parse_tasks WHERE id").
+		WithArgs("admin-task-mismatch").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "upload_id", "file_name", "file_size", "file_url", "file_sha256",
+			"status", "result_name", "result_description", "result_version",
+			"result_tags", "result_readme", "result_id", "result_forked_from", "result_metadata", "attempts",
+			"owner_id", "space_id", "skill_id",
+		}).AddRow(
+			"admin-task-mismatch", "upload-mismatch", "skill.zip", int64(2048), "skill-uploads/upload-mismatch/admin.zip", "sha",
+			"success", "gstack-guard", "desc", "2.0.0",
+			[]byte(`[]`), "", "", "", nil, 0,
+			"owner-1", "", "admin-skill",
+		))
+
+	_, err = svc.AdminReupload(context.Background(), "admin-skill", AdminReuploadParams{
+		ParseTaskID: "admin-task-mismatch",
+		AdminUID:    "admin",
+	})
+	if !errors.Is(err, ErrNameMismatch) {
+		t.Fatalf("AdminReupload error = %v, want ErrNameMismatch", err)
+	}
+	if len(store.deleteKeys) != 1 || store.deleteKeys[0] != "skill-uploads/upload-mismatch/admin.zip" {
+		t.Fatalf("deleteKeys=%v, want temp upload cleanup", store.deleteKeys)
+	}
+	if store.putCount != 0 {
+		t.Fatalf("PutObject count=%d, want 0", store.putCount)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 

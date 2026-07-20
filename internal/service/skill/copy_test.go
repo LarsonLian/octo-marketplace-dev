@@ -265,7 +265,7 @@ func TestUpdate_GetObjectFailure_NoDBMutation(t *testing.T) {
 		"owner_id", "space_id", "skill_id",
 	}).AddRow(
 		"task-2", "upload-2", "new-skill.zip", int64(2048), "skills/upload-2/new-skill.zip", "newsha",
-		"success", "New Skill", "New desc", "2.0.0",
+		"success", "Old Skill", "New desc", "2.0.0",
 		[]byte(`["new"]`), "# New\nContent", "", "", nil, 0,
 		"user-1", "space-1", "skill-1",
 	)
@@ -288,6 +288,65 @@ func TestUpdate_GetObjectFailure_NoDBMutation(t *testing.T) {
 	// Verify no DB mutations (sqlmock catches unexpected queries)
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unexpected DB calls: %v", err)
+	}
+}
+
+func TestUpdate_ReuploadNameMismatchDeletesTempObject(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	store := &fakeStorage{}
+	repo := skillrepo.New(db)
+	catRepo := categoryrepo.New(db)
+	svc := New(repo, catRepo, store, func() string { return "id" })
+	now := time.Now()
+
+	mock.ExpectQuery("SELECT .+ FROM skills").
+		WithArgs("skill-1").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "name", "display_name", "icon_url", "source_skill_id", "current_version_id",
+			"description", "category_id", "tags", "owner_id", "owner_name",
+			"space_id", "visibility", "version", "readme_content", "file_name", "file_url",
+			"file_size", "file_sha256", "created_at", "updated_at",
+			"resolved_version", "version_storage", "view_count", "download_count",
+		}).AddRow(
+			"skill-1", "octo-style", "octo-style", "", "", "",
+			"desc", "cat-1", []byte(`[]`), "user-1", "User One",
+			"space-1", "space", "1.0.0", "old readme", "old.zip", "skills/skill-1/v1.0.0/old.zip",
+			int64(512), "oldsha", now, now,
+			"1.0.0", "", int64(0), int64(0),
+		))
+	mock.ExpectQuery("SELECT .+ FROM parse_tasks WHERE id").
+		WithArgs("task-mismatch").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "upload_id", "file_name", "file_size", "file_url", "file_sha256",
+			"status", "result_name", "result_description", "result_version",
+			"result_tags", "result_readme", "result_id", "result_forked_from", "result_metadata", "attempts",
+			"owner_id", "space_id", "skill_id",
+		}).AddRow(
+			"task-mismatch", "upload-mismatch", "skill.zip", int64(2048), "skill-uploads/upload-mismatch/skill.zip", "sha",
+			"success", "gstack-guard", "desc", "2.0.0",
+			[]byte(`[]`), "", "", "", nil, 0,
+			"user-1", "space-1", "skill-1",
+		))
+
+	_, updateErr := svc.Update(context.Background(), "skill-1", "user-1", "space-1", UpdateParams{
+		ParseTaskID: "task-mismatch",
+	})
+	if !errors.Is(updateErr, ErrNameMismatch) {
+		t.Fatalf("Update error = %v, want ErrNameMismatch", updateErr)
+	}
+	if len(store.deleteKeys) != 1 || store.deleteKeys[0] != "skill-uploads/upload-mismatch/skill.zip" {
+		t.Fatalf("deleteKeys=%v, want temp upload cleanup", store.deleteKeys)
+	}
+	if store.putCount != 0 {
+		t.Fatalf("PutObject count=%d, want 0", store.putCount)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 

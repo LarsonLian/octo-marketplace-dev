@@ -388,6 +388,10 @@ func (h *Handler) Update(c *gin.Context) {
 			apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "zip id does not match skill id", nil, "")
 			return
 		}
+		if errors.Is(err, skillsvc.ErrNameMismatch) {
+			apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "skill name does not match SKILL.md name", nil, "")
+			return
+		}
 		if errors.Is(err, skillsvc.ErrParseTaskConsumed) {
 			apiresponse.Fail(c, http.StatusConflict, errcode.Conflict, "parse task already consumed", nil, "")
 			return

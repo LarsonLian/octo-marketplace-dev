@@ -74,6 +74,9 @@ var ErrNoFile = errors.New("no file available")
 // ErrIDMismatch indicates the zip's embedded id does not match the target skill.
 var ErrIDMismatch = errors.New("zip id mismatch")
 
+// ErrNameMismatch indicates the parsed SKILL.md name does not match the target skill.
+var ErrNameMismatch = errors.New("skill name mismatch")
+
 // SkillItem is the API-facing representation of a skill.
 type SkillItem struct {
 	ID            string   `json:"skill_id"`
@@ -477,6 +480,11 @@ func (s *Service) Update(ctx context.Context, id, userID, spaceID string, p Upda
 		// Validate zip embedded id matches current skill id
 		if pt.ResultID != "" && pt.ResultID != id {
 			return nil, ErrIDMismatch
+		}
+		// Validate SKILL.md name matches current skill before applying a reupload.
+		if pt.ResultName != "" && pt.ResultName != row.Name {
+			_ = s.store.DeleteObject(ctx, pt.FileURL)
+			return nil, ErrNameMismatch
 		}
 
 		// Determine version for final key

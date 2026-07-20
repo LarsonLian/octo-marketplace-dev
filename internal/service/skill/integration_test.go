@@ -119,7 +119,7 @@ func TestUpdate_ReuploadFlow_NewVersionGenerated(t *testing.T) {
 	}
 	defer db.Close()
 
-	zipData := makeTestZip("Updated Skill", "Updated desc", "3.0.0")
+	zipData := makeTestZip("Original Skill", "Updated desc", "3.0.0")
 	store := &fakeStorage{getData: zipData}
 	repo := skillrepo.New(db)
 	catRepo := categoryrepo.New(db)
@@ -160,7 +160,7 @@ func TestUpdate_ReuploadFlow_NewVersionGenerated(t *testing.T) {
 	}).AddRow(
 		"task-reup", "upload-reup", "new.zip", int64(len(zipData)),
 		"skill-uploads/upload-reup/new.zip", testSHA256Hex(zipData),
-		"success", "Updated Skill", "Updated desc", "3.0.0",
+		"success", "Original Skill", "Updated desc", "3.0.0",
 		[]byte(`["v3","updated"]`), "# Updated\nNew body", "", "", nil, 0,
 		"user-reup", "space-reup", "skill-reup",
 	)
@@ -191,7 +191,7 @@ func TestUpdate_ReuploadFlow_NewVersionGenerated(t *testing.T) {
 		"file_size", "file_sha256", "created_at", "updated_at",
 		"resolved_version", "version_storage", "view_count", "download_count",
 	}).AddRow(
-		"skill-reup", "Updated Skill", "Updated Skill", "", "", "ver-id-1",
+		"skill-reup", "Original Skill", "Original Skill", "", "", "ver-id-1",
 		"Updated desc", "cat-1", []byte(`["v3","updated"]`), "user-reup", "User Reup",
 		"space-reup", "space", "3.0.0", "# Updated\nNew body", "skill.zip",
 		"skills/skill-reup/v3.0.0/skill.zip", int64(len(zipData)), testSHA256Hex(zipData), now, now,
