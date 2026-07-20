@@ -27,8 +27,39 @@ func TestRelevanceOrderCoversEverySearchableField(t *testing.T) {
 			t.Fatalf("ranking omits %s: %s", field, order)
 		}
 	}
-	if len(args) != 7 {
-		t.Fatalf("ranking args = %d, want 7", len(args))
+	if len(args) != 8 {
+		t.Fatalf("ranking args = %d, want 8", len(args))
+	}
+}
+
+// TestKeywordSearchIsCaseInsensitiveOnJSONColumns guards the fix for yujiawei P1:
+// JSON_SEARCH uses binary collation on JSON columns, so the SQL side was
+// case-sensitive while enrichListItem was case-insensitive — mixed-case tags,
+// tool names, and usage examples were silently dropped from the result set.
+// The keyword clause and relevance ranking must both lowercase the JSON side
+// (via LOWER(CAST(... AS CHAR))) and match against a lowercased keyword.
+func TestKeywordSearchIsCaseInsensitiveOnJSONColumns(t *testing.T) {
+	where, args := (ListFilter{CallerUID: "u1", SpaceID: "s1", Keyword: "GitHub"}).buildWhere()
+	for _, needle := range []string{
+		"LOWER(CAST(tags_json AS CHAR)) LIKE ?",
+		"LOWER(CAST(JSON_EXTRACT(tools_json, '$[*].name') AS CHAR)) LIKE ?",
+		"LOWER(CAST(JSON_EXTRACT(tools_json, '$[*].description') AS CHAR)) LIKE ?",
+		"LOWER(CAST(usage_examples_json AS CHAR)) LIKE ?",
+	} {
+		if !strings.Contains(where, needle) {
+			t.Fatalf("keyword clause missing case-insensitive JSON match %q: %s", needle, where)
+		}
+	}
+	if strings.Contains(where, "JSON_SEARCH") {
+		t.Fatalf("keyword clause must not use case-sensitive JSON_SEARCH: %s", where)
+	}
+	// keyword args must be lowercased; args = [space_id, caller_uid, 8x like]
+	if len(args) < 3 {
+		t.Fatalf("args too short: %#v", args)
+	}
+	kwArg, ok := args[2].(string)
+	if !ok || !strings.Contains(kwArg, "github") || strings.Contains(kwArg, "GitHub") {
+		t.Fatalf("keyword arg must be lowercased, got %q", kwArg)
 	}
 }
 

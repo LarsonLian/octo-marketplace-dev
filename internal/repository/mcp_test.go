@@ -308,3 +308,63 @@ func TestConcurrentCreateSameSlug(t *testing.T) {
 		t.Fatalf("live rows with slug=%d want=1", n)
 	}
 }
+
+// TestKeywordSearchCaseInsensitive is the DB-backed regression for the JSON
+// case-sensitivity fix (PR #9 yujiawei P1). Before the fix, JSON_SEARCH on
+// tags_json / tools_json / usage_examples_json used binary collation so a
+// keyword like "github" missed a row whose only match was tag="GitHub",
+// tool.Name="GitHubSearch", or usage_example="use GitHub" — the WHERE clause
+// dropped the row entirely, disagreeing with enrichListItem which lowercased
+// both sides. This test seeds exactly such a row and asserts every JSON path
+// resolves case-insensitively.
+func TestKeywordSearchCaseInsensitive(t *testing.T) {
+	database := openTestDB(t)
+	ctx := context.Background()
+	repo := New(database)
+
+	const (
+		owner = "owner-kw-case"
+		space = "space-kw-case"
+	)
+	seed := func(name string, tags []string, tools []model.Tool, examples []string) string {
+		cleanTuple(t, database, owner, space, name)
+		t.Cleanup(func() { cleanTuple(t, database, owner, space, name) })
+		m := newTestMCP(name, owner, space)
+		m.Tags = tags
+		m.Tools = tools
+		m.UsageExamples = examples
+		if err := repo.Create(ctx, m); err != nil {
+			t.Fatalf("seed %s: %v", name, err)
+		}
+		return m.ID
+	}
+	tagsRow := seed("KW Case Tag", []string{"GitHub"}, nil, nil)
+	toolNameRow := seed("KW Case ToolName", nil, []model.Tool{{Name: "GitHubSearch", Description: "search"}}, nil)
+	toolDescRow := seed("KW Case ToolDesc", nil, []model.Tool{{Name: "search", Description: "Uses the GitHub API"}}, nil)
+	usageRow := seed("KW Case Usage", nil, nil, []string{"use GitHub CLI"})
+
+	list, _, _, err := repo.List(ctx, ListFilter{
+		CallerUID: owner,
+		SpaceID:   space,
+		Keyword:   "github", // lowercase — every seeded row is mixed case
+		MineOnly:  true,
+		Limit:     50,
+	})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	got := map[string]bool{}
+	for _, m := range list {
+		got[m.ID] = true
+	}
+	for label, id := range map[string]string{
+		"tags_json":           tagsRow,
+		"tools_json.name":     toolNameRow,
+		"tools_json.desc":     toolDescRow,
+		"usage_examples_json": usageRow,
+	} {
+		if !got[id] {
+			t.Fatalf("case-insensitive keyword search missed %s row (id=%s); got=%v", label, id, got)
+		}
+	}
+}

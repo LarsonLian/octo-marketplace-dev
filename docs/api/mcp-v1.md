@@ -301,9 +301,14 @@ Returns every record visible to the caller inside their current Space:
 
 | Name | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `keyword` | string | — | Case-insensitive substring match on `name` and `slogan`. |
-| `category` | string | `all` | Category key; `all` disables the filter. |
-| `created_by_type` | string (repeatable) | — | Provenance filter. Accepts `human` / `bot` / `import`. Repeat the query parameter to OR-combine (`?created_by_type=bot&created_by_type=import`). Absent → no filter. |
+| `keyword` | string | — | Case-insensitive substring match against `name`, `slogan`, `category`, `creator_name`, each entry of `tags`, `tools[].name`, `tools[].description`, and `usage_examples`. |
+| `category` | string (repeatable) | `all` | Category key; `all` disables the filter. Repeat or comma-separate (`?category=dev,search`) to OR-combine. |
+| `tag` | string (repeatable) | — | Tag filter; repeat or comma-separate to OR-combine. |
+| `transport` | string (repeatable) | — | Transport filter (`stdio` / `sse` / `streamable-http`); repeat or comma-separate to OR-combine. |
+| `visibility` | string (repeatable) | — | Visibility filter (`system` / `public` / `private`); repeat or comma-separate. Absent → no filter (still bounded by the visible-set rule above). |
+| `source` | string (repeatable) | — | Source facet (`system` / `space` / `mine`). Predicates partition the set the same way the response's `source` label does — a caller-owned row is labeled `mine`, not `space`. |
+| `created_by_type` | string (repeatable) | — | Provenance filter. Accepts `human` / `bot` / `import`. Repeat or comma-separate to OR-combine. Absent → no filter. |
+| `sort` | string | — | Ranking selector. `relevance` (only meaningful together with a non-empty `keyword`) orders by a fixed weighted match score against every searchable field; any other value falls back to the default order. |
 | `page` | int | `1` | One-based page number. |
 | `page_size` | int | `20` | Page size, max `100`. |
 
@@ -324,7 +329,9 @@ Returns every record visible to the caller inside their current Space:
   pagination.
 - Category filter options are supplied by the dedicated category API; MCP list
   responses do not embed category facets.
-- Order: newest first (`created_at DESC`). Not configurable in v1.
+- Default order: newest first (`created_at DESC`, tie-broken by `id DESC`).
+  Pass `sort=relevance` together with a non-empty `keyword` to switch to the
+  weighted match score; any other `sort` value falls back to the default.
 
 **Errors:** 401 / 403.
 
@@ -334,8 +341,9 @@ Returns every record owned by the caller in their current Space,
 regardless of visibility (including their own `private`). Never leaks
 anything owned by another user.
 
-**Query parameters:** same `keyword`, `category`, `page`, `page_size` as
-`GET /mcps`.
+**Query parameters:** same as `GET /mcps` (`keyword`, `category`, `tag`,
+`transport`, `visibility`, `source`, `created_by_type`, `sort`, `page`,
+`page_size`).
 
 **Response (200):** same envelope as `GET /mcps`, with `data` and
 `pagination.total` restricted to `owner_uid == caller`.
