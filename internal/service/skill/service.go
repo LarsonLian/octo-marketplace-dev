@@ -3,6 +3,8 @@ package skill
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,15 +21,29 @@ import (
 
 // Service handles business logic for skills.
 type Service struct {
-	repo    *skillrepo.Repo
-	catRepo *categoryrepo.Repo
-	store   storage.Storage
-	idGen   func() string
+	repo            *skillrepo.Repo
+	catRepo         *categoryrepo.Repo
+	store           storage.Storage
+	idGen           func() string
+	maxArchiveBytes int64
 }
 
 // New creates a skill service.
 func New(repo *skillrepo.Repo, catRepo *categoryrepo.Repo, store storage.Storage, idGen func() string) *Service {
-	return &Service{repo: repo, catRepo: catRepo, store: store, idGen: idGen}
+	return &Service{repo: repo, catRepo: catRepo, store: store, idGen: idGen, maxArchiveBytes: defaultMaxArchiveBytes}
+}
+
+const (
+	defaultMaxArchiveBytes = int64(20 << 20)
+	maxSkillMDReadBytes    = int64(2 << 20)
+)
+
+// SetMaxArchiveBytes configures the maximum temp archive size accepted during
+// publish/reupload object re-reads.
+func (s *Service) SetMaxArchiveBytes(maxBytes int64) {
+	if maxBytes > 0 {
+		s.maxArchiveBytes = maxBytes
+	}
 }
 
 // ErrNotFound indicates the skill was not found or access denied.
@@ -263,15 +279,9 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (*SkillItem, error
 	id := s.idGen()
 	versionID := s.idGen()
 
-	// Download the temporary zip from object storage
-	zipReader, err := s.store.GetObject(ctx, pt.FileURL)
+	zipData, err := s.readVerifiedTempZip(ctx, pt)
 	if err != nil {
-		return nil, fmt.Errorf("download temp zip: %w", err)
-	}
-	zipData, err := io.ReadAll(zipReader)
-	zipReader.Close()
-	if err != nil {
-		return nil, fmt.Errorf("read temp zip: %w", err)
+		return nil, err
 	}
 
 	// Build raw metadata from parse task for vendor field preservation
@@ -301,9 +311,7 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (*SkillItem, error
 		return nil, fmt.Errorf("rewrite zip: %w", err)
 	}
 
-	// Compute object keys
-	zipObjectKey := fmt.Sprintf("skills/%s/v%s/skill.zip", id, version)
-	skillMdObjectKey := fmt.Sprintf("skills/%s/v%s/SKILL.md", id, version)
+	zipObjectKey, skillMdObjectKey := versionObjectKeys(id, versionID)
 
 	// PutObject: upload rewritten zip
 	if err := s.store.PutObject(ctx, zipObjectKey, bytes.NewReader(rewriteResult.ZipBytes), rewriteResult.ZipSize, "application/zip"); err != nil {
@@ -498,15 +506,9 @@ func (s *Service) Update(ctx context.Context, id, userID, spaceID string, p Upda
 			repoParams.TagNames = tagNames
 		}
 
-		// Download the temporary zip from object storage
-		zipReader, err := s.store.GetObject(ctx, pt.FileURL)
+		zipData, err := s.readVerifiedTempZip(ctx, pt)
 		if err != nil {
-			return nil, fmt.Errorf("download temp zip: %w", err)
-		}
-		zipData, err := io.ReadAll(zipReader)
-		zipReader.Close()
-		if err != nil {
-			return nil, fmt.Errorf("read temp zip: %w", err)
+			return nil, err
 		}
 
 		// Build raw metadata from parse task
@@ -546,9 +548,8 @@ func (s *Service) Update(ctx context.Context, id, userID, spaceID string, p Upda
 			return nil, fmt.Errorf("rewrite zip: %w", err)
 		}
 
-		// Compute object keys
-		zipObjectKey := fmt.Sprintf("skills/%s/v%s/skill.zip", id, version)
-		skillMdObjectKey := fmt.Sprintf("skills/%s/v%s/SKILL.md", id, version)
+		versionID := s.idGen()
+		zipObjectKey, skillMdObjectKey := versionObjectKeys(id, versionID)
 
 		// PutObject: upload rewritten zip
 		if err := s.store.PutObject(ctx, zipObjectKey, bytes.NewReader(rewriteResult.ZipBytes), rewriteResult.ZipSize, "application/zip"); err != nil {
@@ -583,8 +584,6 @@ func (s *Service) Update(ctx context.Context, id, userID, spaceID string, p Upda
 		repoParams.FileSHA256 = &rewriteResult.ZipSHA256
 		repoParams.FileURL = &zipObjectKey
 
-		// Pre-generate version ID and set current_version_id on the skill update
-		versionID := s.idGen()
 		repoParams.CurrentVersionID = &versionID
 
 		// Transactionally update skill, insert version, and consume parse task
@@ -601,11 +600,9 @@ func (s *Service) Update(ctx context.Context, id, userID, spaceID string, p Upda
 			ChangedBy: userID,
 		})
 		if err != nil {
-			// Best-effort cleanup of uploaded objects on DB failure
-			go func() {
-				_ = s.store.DeleteObject(context.Background(), zipObjectKey)
-				_ = s.store.DeleteObject(context.Background(), skillMdObjectKey)
-			}()
+			// Best-effort cleanup of uploaded objects on DB failure.
+			_ = s.store.DeleteObject(context.Background(), zipObjectKey)
+			_ = s.store.DeleteObject(context.Background(), skillMdObjectKey)
 			if errors.Is(err, skillrepo.ErrParseTaskAlreadyConsumed) {
 				return nil, ErrParseTaskConsumed
 			}
@@ -866,11 +863,57 @@ func (s *Service) GetSkillMD(ctx context.Context, id, spaceID, userID string) ([
 	}
 	defer reader.Close()
 
-	data, err := io.ReadAll(reader)
+	data, err := readLimited(reader, maxSkillMDReadBytes)
 	if err != nil {
 		return nil, fmt.Errorf("read skill md: %w", err)
 	}
 	return data, nil
+}
+
+func (s *Service) readVerifiedTempZip(ctx context.Context, pt *skillrepo.ParseTaskRow) ([]byte, error) {
+	if pt == nil || pt.FileURL == "" || pt.FileSize <= 0 || pt.FileSHA256 == "" {
+		return nil, ErrInvalidParseTask
+	}
+	if s.maxArchiveBytes > 0 && pt.FileSize > s.maxArchiveBytes {
+		return nil, fmt.Errorf("read temp zip: file exceeds size limit")
+	}
+
+	reader, err := s.store.GetObject(ctx, pt.FileURL)
+	if err != nil {
+		return nil, fmt.Errorf("download temp zip: %w", err)
+	}
+	defer reader.Close()
+
+	data, err := readLimited(reader, pt.FileSize)
+	if err != nil {
+		return nil, fmt.Errorf("read temp zip: %w", err)
+	}
+	sum := sha256.Sum256(data)
+	actual := hex.EncodeToString(sum[:])
+	if !strings.EqualFold(actual, pt.FileSHA256) {
+		return nil, fmt.Errorf("read temp zip: sha256 mismatch")
+	}
+	return data, nil
+}
+
+func readLimited(reader io.Reader, maxBytes int64) ([]byte, error) {
+	if maxBytes < 0 {
+		return nil, fmt.Errorf("invalid size limit")
+	}
+	limited := io.LimitReader(reader, maxBytes+1)
+	data, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, fmt.Errorf("file exceeds size limit")
+	}
+	return data, nil
+}
+
+func versionObjectKeys(skillID, versionID string) (zipObjectKey, skillMdObjectKey string) {
+	base := fmt.Sprintf("skills/%s/versions/%s", skillID, versionID)
+	return base + "/skill.zip", base + "/SKILL.md"
 }
 
 // extractReadmeBody extracts the body (after frontmatter) from SKILL.md content,

@@ -45,7 +45,7 @@ func TestCreate_FullFlow_VerifiesStoragePath(t *testing.T) {
 		"owner_id", "space_id", "skill_id",
 	}).AddRow(
 		"task-int-1", "upload-int-1", "skill.zip", int64(len(zipData)),
-		"skill-uploads/upload-int-1/skill.zip", "sha256-test",
+		"skill-uploads/upload-int-1/skill.zip", testSHA256Hex(zipData),
 		"success", "Integration Skill", "Integration test description", "2.0.0",
 		[]byte(`["integration","test"]`), "# Integration Skill\nBody", "", "", nil, 0,
 		"user-int", "space-int", "",
@@ -87,9 +87,9 @@ func TestCreate_FullFlow_VerifiesStoragePath(t *testing.T) {
 		t.Errorf("Version = %q, want %q", item.Version, "2.0.0")
 	}
 
-	// Verify storage paths are correct: skills/{id}/v{version}/skill.zip and SKILL.md
-	expectedZipKey := "skills/gen-id-1/v2.0.0/skill.zip"
-	expectedMdKey := "skills/gen-id-1/v2.0.0/SKILL.md"
+	// Verify storage paths are immutable and version-record-specific.
+	expectedZipKey := "skills/gen-id-1/versions/gen-id-2/skill.zip"
+	expectedMdKey := "skills/gen-id-1/versions/gen-id-2/SKILL.md"
 
 	if len(store.putKeys) != 2 {
 		t.Fatalf("PutObject call count = %d, want 2", len(store.putKeys))
@@ -159,7 +159,7 @@ func TestUpdate_ReuploadFlow_NewVersionGenerated(t *testing.T) {
 		"owner_id", "space_id", "skill_id",
 	}).AddRow(
 		"task-reup", "upload-reup", "new.zip", int64(len(zipData)),
-		"skill-uploads/upload-reup/new.zip", "newsha256",
+		"skill-uploads/upload-reup/new.zip", testSHA256Hex(zipData),
 		"success", "Updated Skill", "Updated desc", "3.0.0",
 		[]byte(`["v3","updated"]`), "# Updated\nNew body", "", "", nil, 0,
 		"user-reup", "space-reup", "skill-reup",
@@ -194,7 +194,7 @@ func TestUpdate_ReuploadFlow_NewVersionGenerated(t *testing.T) {
 		"skill-reup", "Updated Skill", "Updated Skill", "", "", "ver-id-1",
 		"Updated desc", "cat-1", []byte(`["v3","updated"]`), "user-reup", "User Reup",
 		"space-reup", "space", "3.0.0", "# Updated\nNew body", "skill.zip",
-		"skills/skill-reup/v3.0.0/skill.zip", int64(len(zipData)), "newsha256", now, now,
+		"skills/skill-reup/v3.0.0/skill.zip", int64(len(zipData)), testSHA256Hex(zipData), now, now,
 		"3.0.0", `{"type":"s3","zip_object_key":"skills/skill-reup/v3.0.0/skill.zip","skill_md_object_key":"skills/skill-reup/v3.0.0/SKILL.md","zip_file_name":"skill.zip","zip_size":2048,"zip_sha256":"newsha256"}`, int64(0), int64(0),
 	)
 	mock.ExpectQuery("SELECT .+ FROM skills").
@@ -216,8 +216,8 @@ func TestUpdate_ReuploadFlow_NewVersionGenerated(t *testing.T) {
 	}
 
 	// Verify storage was called with new version keys
-	expectedZipKey := "skills/skill-reup/v3.0.0/skill.zip"
-	expectedMdKey := "skills/skill-reup/v3.0.0/SKILL.md"
+	expectedZipKey := "skills/skill-reup/versions/ver-id-1/skill.zip"
+	expectedMdKey := "skills/skill-reup/versions/ver-id-1/SKILL.md"
 	if len(store.putKeys) < 2 {
 		t.Fatalf("PutObject call count = %d, want >= 2", len(store.putKeys))
 	}
@@ -510,7 +510,7 @@ func TestCreate_PutZipFails_NoDBMutation(t *testing.T) {
 		"owner_id", "space_id", "skill_id",
 	}).AddRow(
 		"task-fail", "upload-fail", "skill.zip", int64(len(zipData)),
-		"skill-uploads/upload-fail/skill.zip", "sha",
+		"skill-uploads/upload-fail/skill.zip", testSHA256Hex(zipData),
 		"success", "Fail Skill", "Will fail", "1.0.0",
 		[]byte(`[]`), "", "", "", nil, 0,
 		"user-fail", "space-fail", "",
@@ -568,7 +568,7 @@ func TestUploadPrefix_IsSkillUploads(t *testing.T) {
 		"owner_id", "space_id", "skill_id",
 	}).AddRow(
 		"task-prefix", "some-upload-id", "my-skill.zip", int64(len(zipData)),
-		tempPath, "sha",
+		tempPath, testSHA256Hex(zipData),
 		"success", "Prefix Skill", "desc", "1.0.0",
 		[]byte(`[]`), "", "", "", nil, 0,
 		"user-p", "space-p", "",
@@ -598,9 +598,9 @@ func TestUploadPrefix_IsSkillUploads(t *testing.T) {
 		t.Fatalf("Create failed: %v", err)
 	}
 
-	// Verify the final storage path is NOT "skill-uploads/" — it's "skills/{id}/v{ver}/"
-	permanentZipKey := "skills/prefix-id/v1.0.0/skill.zip"
-	permanentMdKey := "skills/prefix-id/v1.0.0/SKILL.md"
+	// Verify the final storage path is NOT "skill-uploads/" — it's an immutable skills/ path.
+	permanentZipKey := "skills/prefix-id/versions/prefix-id/skill.zip"
+	permanentMdKey := "skills/prefix-id/versions/prefix-id/SKILL.md"
 
 	if len(store.putKeys) < 2 {
 		t.Fatalf("PutObject calls = %d, want >= 2", len(store.putKeys))
@@ -793,7 +793,7 @@ func TestCreate_ZipRewrite_ExtractsSkillMD(t *testing.T) {
 		"owner_id", "space_id", "skill_id",
 	}).AddRow(
 		"task-ext", "upload-ext", "skill.zip", int64(len(zipData)),
-		"skill-uploads/upload-ext/skill.zip", "sha",
+		"skill-uploads/upload-ext/skill.zip", testSHA256Hex(zipData),
 		"success", "Extract Test", "Test extraction", "1.2.3",
 		[]byte(`["extract"]`), "# Extract Test\nBody", "", "", nil, 0,
 		"user-ext", "space-ext", "",
@@ -829,8 +829,8 @@ func TestCreate_ZipRewrite_ExtractsSkillMD(t *testing.T) {
 	if len(store.putKeys) < 2 {
 		t.Fatalf("expected at least 2 PutObject calls, got %d", len(store.putKeys))
 	}
-	if store.putKeys[1] != "skills/extract-id/v1.2.3/SKILL.md" {
-		t.Errorf("SKILL.md key = %q, want %q", store.putKeys[1], "skills/extract-id/v1.2.3/SKILL.md")
+	if store.putKeys[1] != "skills/extract-id/versions/extract-id/SKILL.md" {
+		t.Errorf("SKILL.md key = %q, want %q", store.putKeys[1], "skills/extract-id/versions/extract-id/SKILL.md")
 	}
 
 	// ReadmeContent should be extracted and set
