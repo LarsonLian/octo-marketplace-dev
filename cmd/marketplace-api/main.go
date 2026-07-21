@@ -119,17 +119,23 @@ func main() {
 	// Start flush worker if Redis is configured.
 	flushCtx, flushCancel := context.WithCancel(context.Background())
 	defer flushCancel()
+	var metricsRDB *goredis.Client
 	if cfg.RedisURL != "" {
 		opts, err := goredis.ParseURL(cfg.RedisURL)
 		if err == nil {
-			rdb := goredis.NewClient(opts)
+			metricsRDB = goredis.NewClient(opts)
+			defer func() {
+				if err := metricsRDB.Close(); err != nil {
+					log.Printf("[redis] close failed: %v", err)
+				}
+			}()
 			mRepo := metricsrepo.New(database)
 			flushCfg := metricssvc.FlushWorkerConfig{
 				Interval: cfg.MetricsFlushInterval,
 				Batch:    int64(cfg.MetricsFlushBatch),
 				LockTTL:  cfg.MetricsFlushLockTTL,
 			}
-			fw := metricssvc.NewFlushWorker(rdb, mRepo, flushCfg)
+			fw := metricssvc.NewFlushWorker(metricsRDB, mRepo, flushCfg)
 			go fw.Start(flushCtx)
 			log.Printf("[flush-worker] enabled (interval=%s)", cfg.MetricsFlushInterval)
 		} else {
@@ -159,11 +165,12 @@ func main() {
 			OSSDownloadSigned:  cfg.OSSDownloadSigned,
 			CORSAllowedOrigins: cfg.CORSAllowedOrigins,
 		}, mcpHandler, adminMCPHandler, router.ParseConfig{
-			ParseTimeout:   cfg.SkillParseTimeout,
-			StaleTimeout:   cfg.SkillParseStaleTimeout,
-			MaxAttempts:    cfg.SkillParseMaxAttempts,
-			WorkerPoolSize: cfg.SkillParseWorkerPoolSize,
-		}, router.RedisConfig{URL: cfg.RedisURL}),
+			ParseTimeout:      cfg.SkillParseTimeout,
+			StaleTimeout:      cfg.SkillParseStaleTimeout,
+			MaxAttempts:       cfg.SkillParseMaxAttempts,
+			WorkerPoolSize:    cfg.SkillParseWorkerPoolSize,
+			BotPublishTimeout: cfg.BotPublishTimeout,
+		}, router.RedisConfig{Client: metricsRDB}),
 		ReadHeaderTimeout: cfg.ReadHeaderTimeout,
 		ReadTimeout:       cfg.ReadTimeout,
 		WriteTimeout:      cfg.WriteTimeout,

@@ -16,6 +16,15 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.ReadHeaderTimeout != 5*time.Second {
 		t.Fatalf("ReadHeaderTimeout=%v want=5s", cfg.ReadHeaderTimeout)
 	}
+	if cfg.WriteTimeout != DefaultHTTPWriteTimeout {
+		t.Fatalf("WriteTimeout=%v want=%v", cfg.WriteTimeout, DefaultHTTPWriteTimeout)
+	}
+	if cfg.BotPublishTimeout != DefaultBotPublishTimeout {
+		t.Fatalf("BotPublishTimeout=%v want=%v", cfg.BotPublishTimeout, DefaultBotPublishTimeout)
+	}
+	if cfg.WriteTimeout <= cfg.BotPublishTimeout {
+		t.Fatalf("WriteTimeout=%v must be greater than BotPublishTimeout=%v", cfg.WriteTimeout, cfg.BotPublishTimeout)
+	}
 }
 
 func TestPublicBaseURLTrimsTrailingSlash(t *testing.T) {
@@ -57,6 +66,10 @@ func TestValidateAPI(t *testing.T) {
 			MySQLDSN: "dsn", APIPort: "8092",
 			SkillParseTimeout: 5 * time.Minute, SkillParseStaleTimeout: 5 * time.Minute,
 		}, wantErr: true},
+		{name: "writeTimeout <= botPublishTimeout", cfg: validParse(Config{
+			MySQLDSN: "dsn", APIPort: "8092",
+			WriteTimeout: 30 * time.Second, BotPublishTimeout: 2 * time.Minute,
+		}), wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -18,9 +18,10 @@ Environment variables configure the API service.
 | `DEV_SPACE_ID` | no | `dev-space` | Local Space when auth is disabled |
 | `HTTP_READ_HEADER_TIMEOUT` | no | `5s` | Header read timeout |
 | `HTTP_READ_TIMEOUT` | no | `15s` | Request read timeout |
-| `HTTP_WRITE_TIMEOUT` | no | `30s` | Response write timeout |
+| `HTTP_WRITE_TIMEOUT` | no | `150s` | Response write timeout; must be greater than `BOT_PUBLISH_TIMEOUT` because bot publish waits synchronously for parsing |
 | `HTTP_IDLE_TIMEOUT` | no | `60s` | Keep-alive idle timeout |
 | `PROBE_ALLOW_PRIVATE` | no | `false` | Allow MCP probes to private/local network targets; enable only in trusted self-hosted deployments |
+| `BOT_PUBLISH_TIMEOUT` | no | `2m` | End-to-end synchronous parse budget for `POST /api/v1/bot/skills/publish` |
 | `SKIP_MIGRATION` | no | `false` | Skip embedded SQL migrations when `true` |
 
 ## Storage Settings
