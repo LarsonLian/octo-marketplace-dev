@@ -160,16 +160,6 @@ components:
         pagination:
           $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.OffsetPagination'
       type: object
-    github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.OffsetList-internal_api_handler_skill_SkillResponse:
-      properties:
-        data:
-          items:
-            $ref: '#/components/schemas/internal_api_handler_skill.SkillResponse'
-          type: array
-          uniqueItems: false
-        pagination:
-          $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.OffsetPagination'
-      type: object
     github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.OffsetPagination:
       properties:
         page:
@@ -2148,6 +2138,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
           description: INTERNAL_ERROR
+        "504":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.Error'
+          description: INTERNAL_ERROR
       security:
       - Bearer: []
       summary: Publish Skill as bot
@@ -3161,7 +3157,7 @@ paths:
       - skill_upload
   /skills:
     get:
-      description: List skills visible in the current Space with offset pagination.
+      description: List skills visible in the current Space with cursor pagination.
       operationId: skill.list
       parameters:
       - description: Search query
@@ -3186,16 +3182,16 @@ paths:
           items:
             type: string
           type: array
-      - description: 'Sort mode: comprehensive (default), latest, downloads, views'
+      - description: 'Sort mode: latest (default), comprehensive, downloads, views'
         in: query
         name: sort
         schema:
           type: string
-      - description: Page number, default 1
+      - description: Cursor for next page; used with default/latest sort
         in: query
-        name: page
+        name: cursor
         schema:
-          type: integer
+          type: string
       - description: Page size, default 20, max 50
         in: query
         name: page_size
@@ -3211,7 +3207,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.OffsetList-internal_api_handler_skill_SkillResponse'
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.CursorList-internal_api_handler_skill_SkillResponse'
           description: OK
         "400":
           content:

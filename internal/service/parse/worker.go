@@ -27,6 +27,7 @@ const defaultWorkerQueueMultiplier = 10
 var (
 	statusUpdateTimeout = 5 * time.Second
 	ErrParseQueueFull   = errors.New("parse queue is full")
+	ErrParseIncomplete  = errors.New("parse task did not reach a terminal state")
 )
 
 // WorkerConfig holds configuration for the parse worker pool.
@@ -143,9 +144,30 @@ func (w *Worker) ProcessSync(ctx context.Context, taskID, objectKey string, maxZ
 
 	select {
 	case <-done:
-		return nil
+		return w.ensureTerminalState(taskID)
 	case <-ctx.Done():
 		return ctx.Err()
+	}
+}
+
+func (w *Worker) ensureTerminalState(taskID string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), statusUpdateTimeout)
+	defer cancel()
+	task, err := w.repo.GetByID(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	if task == nil {
+		return ErrParseIncomplete
+	}
+	switch task.Status {
+	case "success", "failed", "consumed":
+		return nil
+	case "parsing":
+		_ = w.repo.UpdateFailed(ctx, taskID, "INTERNAL_ERROR", publicParseErrorMessage("INTERNAL_ERROR"))
+		return ErrParseIncomplete
+	default:
+		return ErrParseIncomplete
 	}
 }
 
@@ -255,7 +277,11 @@ func (w *Worker) process(parent context.Context, taskID, objectKey string, maxZi
 	forkedFrom := sanitizeString(fm.ForkedFrom, 36)
 	var metadataJSON json.RawMessage
 	if fm.Metadata != nil {
-		metadataJSON, _ = json.Marshal(fm.Metadata)
+		metadataJSON, err = json.Marshal(fm.Metadata)
+		if err != nil {
+			w.updateFailed(taskID, "INVALID_SKILL_MD", "metadata must be JSON-compatible")
+			return
+		}
 	}
 
 	// 6. Update task as success

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 	"time"
 
@@ -233,7 +234,7 @@ func (s *OSSStorage) publicObjectURL(key string) (string, error) {
 	if s.publicPathStyle {
 		objectPath = strings.Trim(s.bucket, "/") + "/" + objectPath
 	}
-	public.Path = strings.TrimRight(public.Path, "/") + "/" + objectPath
+	public.Path = path.Join(public.Path, objectPath)
 	public.RawPath = ""
 	public.RawQuery = ""
 	public.Fragment = ""

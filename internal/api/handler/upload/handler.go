@@ -1,11 +1,13 @@
 package upload
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Mininglamp-OSS/octo-marketplace/internal/api/errcode"
 	apiresponse "github.com/Mininglamp-OSS/octo-marketplace/internal/api/response"
@@ -17,6 +19,8 @@ import (
 	"github.com/Mininglamp-OSS/octo-marketplace/internal/storage"
 	"github.com/gin-gonic/gin"
 )
+
+const botPublishTimeout = 2 * time.Minute
 
 // Handler handles HTTP requests for upload, parse, and download.
 type Handler struct {
@@ -116,6 +120,7 @@ func (h *Handler) RegisterLocalProxy(r *gin.Engine, authEnabled ...bool) {
 // @Failure 404 {object} apiresponse.Error "NOT_FOUND"
 // @Failure 409 {object} apiresponse.Error "CONFLICT"
 // @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
+// @Failure 504 {object} apiresponse.Error "INTERNAL_ERROR"
 // @Router /bot/skills/publish [post]
 func (h *Handler) BotPublishSkill(c *gin.Context) {
 	if h.parseSvc == nil || h.skillSvc == nil {
@@ -161,7 +166,9 @@ func (h *Handler) BotPublishSkill(c *gin.Context) {
 	}
 
 	tags := marshalPublishTags(req.Tags)
-	result, err := h.parseSvc.ParseUploadSync(c.Request.Context(), uploadID, identity.UID)
+	parseCtx, parseCancel := context.WithTimeout(c.Request.Context(), botPublishTimeout)
+	defer parseCancel()
+	result, err := h.parseSvc.ParseUploadSync(parseCtx, uploadID, identity.UID)
 	if err != nil {
 		if errors.Is(err, parse.ErrTaskNotFound) || errors.Is(err, parse.ErrForbidden) {
 			apiresponse.Fail(c, http.StatusNotFound, errcode.NotFound, "upload not found", nil, "")
@@ -169,6 +176,14 @@ func (h *Handler) BotPublishSkill(c *gin.Context) {
 		}
 		if errors.Is(err, parse.ErrTaskNotPending) {
 			apiresponse.Fail(c, http.StatusConflict, errcode.Conflict, "upload cannot be published from its current parse status", nil, "")
+			return
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			apiresponse.Fail(c, http.StatusGatewayTimeout, errcode.InternalError, "skill parse timed out", nil, "")
+			return
+		}
+		if errors.Is(err, parse.ErrParseIncomplete) {
+			apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "解析任务执行失败，请稍后重试", map[string]any{"parse_error_code": "INTERNAL_ERROR"}, "")
 			return
 		}
 		log.Printf("[BotPublishSkill] parse upload failed: %v", err)
@@ -283,18 +298,6 @@ func requestToken(c *gin.Context) string {
 	return ""
 }
 
-func normalizePublishTags(input json.RawMessage) (json.RawMessage, error) {
-	if len(input) == 0 {
-		return nil, nil
-	}
-	var tags []string
-	if err := json.Unmarshal(input, &tags); err != nil {
-		return nil, err
-	}
-	out, _ := json.Marshal(tags)
-	return out, nil
-}
-
 func marshalPublishTags(tags []string) json.RawMessage {
 	if tags == nil {
 		return nil
@@ -363,7 +366,7 @@ func (h *Handler) InitUpload(c *gin.Context) {
 	result, err := h.parseSvc.InitUpload(c.Request.Context(), req.FileName, req.FileSize, identity.UID, spaceID)
 	if err != nil {
 		if errors.Is(err, parse.ErrInvalidFileName) {
-			apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "file_name must end with .zip", nil, "")
+			apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "file_name must end with .zip or .skill", nil, "")
 			return
 		}
 		if errors.Is(err, parse.ErrInvalidFileSize) {
@@ -579,7 +582,7 @@ func (h *Handler) InitReupload(c *gin.Context) {
 	result, err := h.parseSvc.InitReupload(c.Request.Context(), skillID, req.FileName, req.FileSize, identity.UID, spaceID)
 	if err != nil {
 		if errors.Is(err, parse.ErrInvalidFileName) {
-			apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "file_name must end with .zip", nil, "")
+			apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "file_name must end with .zip or .skill", nil, "")
 			return
 		}
 		if errors.Is(err, parse.ErrInvalidFileSize) {

@@ -422,9 +422,7 @@ func TestListSkills(t *testing.T) {
 	defer db.Close()
 
 	now := time.Now().UTC()
-	// Default sort is comprehensive → offset pagination with COUNT first
-	mock.ExpectQuery("SELECT COUNT").
-		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
+	// Default sort preserves the historical latest cursor contract.
 	mock.ExpectQuery("SELECT .+ FROM skills").
 		WillReturnRows(sqlmock.NewRows(skillListCols).
 			AddRow("s1", "Skill 1", "Skill 1", "", "", "",
@@ -452,12 +450,10 @@ func TestListSkillsWithCategoryFilter(t *testing.T) {
 	engine, mock, db := testSetup(t)
 	defer db.Close()
 
-	mock.ExpectQuery("SELECT COUNT").
-		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	mock.ExpectQuery("SELECT .+ FROM skills").
 		WillReturnRows(skillListRow("s1", "Filtered", "user-1", "Alice", "space-1", "space"))
 
-	w := doRequest(engine, "GET", "/api/v1/skill?category_id=cat-1", nil)
+	w := doRequest(engine, "GET", "/api/v1/skill?category_id=cat-1&sort=comprehensive", nil)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status=%d want=%d body=%s", w.Code, http.StatusOK, w.Body.String())
@@ -468,12 +464,10 @@ func TestListSkillsSearch(t *testing.T) {
 	engine, mock, db := testSetup(t)
 	defer db.Close()
 
-	mock.ExpectQuery("SELECT COUNT").
-		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	mock.ExpectQuery("SELECT .+ FROM skills").
 		WillReturnRows(sqlmock.NewRows(skillListCols))
 
-	w := doRequest(engine, "GET", "/api/v1/skill?q=test", nil)
+	w := doRequest(engine, "GET", "/api/v1/skill?q=test&sort=comprehensive", nil)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status=%d want=%d body=%s", w.Code, http.StatusOK, w.Body.String())

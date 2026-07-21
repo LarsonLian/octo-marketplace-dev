@@ -45,6 +45,46 @@ func TestListValidSortModes(t *testing.T) {
 	}
 }
 
+func TestListSortAndPagination(t *testing.T) {
+	tests := []struct {
+		name           string
+		sort           string
+		expectedSort   string
+		expectedCursor bool
+	}{
+		{
+			name:           "omitted sort preserves cursor default",
+			sort:           "",
+			expectedSort:   skillrepo.SortLatest,
+			expectedCursor: true,
+		},
+		{
+			name:           "explicit latest uses cursor",
+			sort:           skillrepo.SortLatest,
+			expectedSort:   skillrepo.SortLatest,
+			expectedCursor: true,
+		},
+		{
+			name:           "comprehensive keeps cursor envelope",
+			sort:           skillrepo.SortComprehensive,
+			expectedSort:   skillrepo.SortComprehensive,
+			expectedCursor: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sort, useCursor := listSortAndPagination(tt.sort)
+			if sort != tt.expectedSort {
+				t.Fatalf("sort = %q, want %q", sort, tt.expectedSort)
+			}
+			if useCursor != tt.expectedCursor {
+				t.Fatalf("useCursor = %v, want %v", useCursor, tt.expectedCursor)
+			}
+		})
+	}
+}
+
 func TestParseOffset(t *testing.T) {
 	tests := []struct {
 		input    string

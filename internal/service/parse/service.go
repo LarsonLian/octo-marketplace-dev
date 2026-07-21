@@ -214,7 +214,15 @@ func (s *Service) TriggerParse(ctx context.Context, uploadID, ownerID string) (s
 	// Submit to worker pool
 	maxBytes := int64(s.maxMB) * 1024 * 1024
 	if err := s.worker.Submit(task.ID, task.FileURL, maxBytes); err != nil {
-		_ = s.repo.UpdateFailed(ctx, task.ID, "PARSE_QUEUE_FULL", publicParseErrorMessage("PARSE_QUEUE_FULL"))
+		if errors.Is(err, ErrParseQueueFull) {
+			restored, restoreErr := s.repo.RestoreParsingToPending(ctx, task.ID)
+			if restoreErr != nil {
+				return "", restoreErr
+			}
+			if !restored {
+				return "", ErrTaskNotPending
+			}
+		}
 		return "", err
 	}
 
@@ -254,7 +262,15 @@ func (s *Service) ParseUploadSync(ctx context.Context, uploadID, ownerID string)
 	if err := s.worker.ProcessSync(ctx, task.ID, task.FileURL, maxBytes); err != nil {
 		return nil, err
 	}
-	return s.GetParseStatus(ctx, task.ID, ownerID)
+	result, err := s.GetParseStatus(ctx, task.ID, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	if result.Status == "parsing" {
+		_ = s.repo.UpdateFailed(ctx, task.ID, "INTERNAL_ERROR", publicParseErrorMessage("INTERNAL_ERROR"))
+		return nil, ErrParseIncomplete
+	}
+	return result, nil
 }
 
 func normalizeUploadFileName(fileName string) (string, error) {
@@ -384,6 +400,18 @@ func (s *Service) GetParseStatus(ctx context.Context, taskID, ownerID string) (*
 			if won {
 				// This pod won the race — re-submit to the worker pool.
 				maxBytes := int64(s.maxMB) * 1024 * 1024
+				if task.Attempts+1 >= s.maxAttempts {
+					if err := s.worker.ProcessSync(ctx, task.ID, task.FileURL, maxBytes); err != nil {
+						_ = s.repo.MarkRetryExhausted(ctx, task.ID)
+						result.Status = "failed"
+						result.Error = &ParseError{
+							Code:    "PARSE_RETRY_EXHAUSTED",
+							Message: publicParseErrorMessage("PARSE_RETRY_EXHAUSTED"),
+						}
+						return result, nil
+					}
+					return s.GetParseStatus(ctx, task.ID, ownerID)
+				}
 				if err := s.worker.Submit(task.ID, task.FileURL, maxBytes); err != nil {
 					_ = s.repo.UpdateFailed(ctx, task.ID, "PARSE_QUEUE_FULL", publicParseErrorMessage("PARSE_QUEUE_FULL"))
 					result.Status = "failed"

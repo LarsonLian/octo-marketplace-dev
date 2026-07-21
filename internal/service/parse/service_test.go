@@ -48,6 +48,22 @@ func (stubStorage) PutObject(context.Context, string, io.Reader, int64, string) 
 
 var _ storage.Storage = (*stubStorage)(nil)
 
+func parseTaskRows(status string) *sqlmock.Rows {
+	now := time.Date(2026, 7, 16, 0, 0, 0, 0, time.UTC)
+	return sqlmock.NewRows([]string{
+		"id", "upload_id", "file_name", "file_size", "file_url", "status",
+		"error_code", "error_message",
+		"result_name", "result_description", "result_version", "result_tags", "result_readme",
+		"result_id", "result_forked_from", "result_metadata",
+		"file_sha256", "attempts", "owner_id", "space_id", "skill_id", "created_at", "updated_at",
+	}).AddRow(
+		"task-1", "upload-1", "skill.zip", int64(1), "skills/upload-1/skill.zip", status,
+		"", "", "", nil, "", []byte("[]"), nil,
+		"", "", nil,
+		"", 0, "user-1", "space-1", "", now, now,
+	)
+}
+
 func TestInitUploadAcceptsSkillPackageFileName(t *testing.T) {
 	for _, fileName := range []string{"skill.zip", "skill.skill", "Skill.SKILL"} {
 		t.Run(fileName, func(t *testing.T) {
@@ -179,6 +195,52 @@ func TestTriggerParseReturnsConflictWhenPendingStateWasConsumed(t *testing.T) {
 	_, err = svc.TriggerParse(context.Background(), "upload-1", "user-1")
 	if err != ErrTaskNotPending {
 		t.Fatalf("expected ErrTaskNotPending, got %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTriggerParseQueueFullRestoresPendingForRetry(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	repo := NewRepo(db)
+	fullWorker := &Worker{jobs: make(chan parseJob)}
+	svc := NewService(stubStorage{}, repo, fullWorker, func() string { return "upload-1" }, 20, ServiceConfig{})
+
+	mock.ExpectQuery("SELECT id, upload_id, file_name, file_size, file_url, status,").
+		WithArgs("upload-1").
+		WillReturnRows(parseTaskRows("pending"))
+	mock.ExpectExec("UPDATE parse_tasks SET status = 'parsing', attempts = attempts \\+ 1 WHERE id = \\? AND status = 'pending'").
+		WithArgs("task-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("UPDATE parse_tasks").
+		WithArgs("task-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	_, err = svc.TriggerParse(context.Background(), "upload-1", "user-1")
+	if err != ErrParseQueueFull {
+		t.Fatalf("first TriggerParse error = %v, want ErrParseQueueFull", err)
+	}
+
+	svc.worker = &Worker{jobs: make(chan parseJob, 1)}
+	mock.ExpectQuery("SELECT id, upload_id, file_name, file_size, file_url, status,").
+		WithArgs("upload-1").
+		WillReturnRows(parseTaskRows("pending"))
+	mock.ExpectExec("UPDATE parse_tasks SET status = 'parsing', attempts = attempts \\+ 1 WHERE id = \\? AND status = 'pending'").
+		WithArgs("task-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	taskID, err := svc.TriggerParse(context.Background(), "upload-1", "user-1")
+	if err != nil {
+		t.Fatalf("second TriggerParse error = %v", err)
+	}
+	if taskID != "task-1" {
+		t.Fatalf("taskID = %q, want task-1", taskID)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

@@ -133,6 +133,7 @@ type ListParams struct {
 	Limit      int
 	Offset     int
 	Sort       string // comprehensive, latest, downloads, views
+	UseCursor  bool
 }
 
 // List returns skills visible to the user.
@@ -147,6 +148,7 @@ func (s *Service) List(ctx context.Context, p ListParams) (*ListResult, error) {
 		Limit:      p.Limit,
 		Offset:     p.Offset,
 		Sort:       p.Sort,
+		UseCursor:  p.UseCursor,
 		MineOnly:   false,
 	})
 	if err != nil {

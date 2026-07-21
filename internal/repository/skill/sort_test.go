@@ -114,6 +114,57 @@ func TestListSortLatestUsesOffset(t *testing.T) {
 	}
 }
 
+func TestListSortLatestUsesCursorWhenOptedIn(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	now := time.Now().UTC()
+
+	mock.ExpectQuery("ORDER BY s\\.created_at DESC, s\\.id DESC").
+		WithArgs("space-1", "user-1", "space-1", 2).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "name", "display_name", "icon_url", "source_skill_id", "current_version_id",
+			"description", "category_id", "tags",
+			"owner_id", "owner_name", "space_id", "visibility", "version",
+			"readme_content", "file_name", "file_url", "file_size", "file_sha256",
+			"created_at", "updated_at", "resolved_version", "version_storage", "view_count", "download_count",
+		}).
+			AddRow("s2", "Skill 2", "Skill 2", "", "", "",
+				"desc", "cat-1", []byte(`[]`),
+				"user-1", "Alice", "space-1", "space", "1.0.0",
+				"", "f.zip", "url", int64(100), "sha", now.Add(time.Second), now.Add(time.Second), "1.0.0", "", int64(0), int64(0)).
+			AddRow("s1", "Skill 1", "Skill 1", "", "", "",
+				"desc", "cat-1", []byte(`[]`),
+				"user-1", "Alice", "space-1", "space", "1.0.0",
+				"", "f.zip", "url", int64(100), "sha", now, now, "1.0.0", "", int64(0), int64(0)))
+
+	result, err := New(db).List(context.Background(), ListFilter{
+		SpaceID:   "space-1",
+		UserID:    "user-1",
+		Limit:     1,
+		Sort:      SortLatest,
+		UseCursor: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Total != 0 {
+		t.Errorf("Total = %d, want 0 for cursor pagination", result.Total)
+	}
+	if result.NextCursor == nil {
+		t.Fatal("NextCursor should be set for cursor pagination with an extra row")
+	}
+	if len(result.Items) != 1 || result.Items[0].ID != "s2" {
+		t.Fatalf("Items = %+v, want only s2", result.Items)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestListSortDownloads(t *testing.T) {
 	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
 	if err != nil {

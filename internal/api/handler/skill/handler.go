@@ -69,7 +69,7 @@ var validSortModes = map[string]bool{
 
 // List godoc
 // @Summary List skills
-// @Description List skills visible in the current Space with offset pagination.
+// @Description List skills visible in the current Space with cursor pagination.
 // @Tags skill
 // @ID skill.list
 // @Accept json
@@ -79,10 +79,10 @@ var validSortModes = map[string]bool{
 // @Param category_id query string false "Category ID"
 // @Param tags query string false "Comma-separated tag names; all tags must match"
 // @Param tag query []string false "Repeated tag names; all tags must match"
-// @Param sort query string false "Sort mode: comprehensive (default), latest, downloads, views"
-// @Param page query int false "Page number, default 1"
+// @Param sort query string false "Sort mode: latest (default), comprehensive, downloads, views"
+// @Param cursor query string false "Cursor for next page; used with default/latest sort"
 // @Param page_size query int false "Page size, default 20, max 50"
-// @Success 200 {object} apiresponse.OffsetList[SkillResponse]
+// @Success 200 {object} apiresponse.CursorList[SkillResponse]
 // @Failure 400 {object} apiresponse.Error "VALIDATION_ERROR"
 // @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
 // @Failure 403 {object} apiresponse.Error "FORBIDDEN"
@@ -98,22 +98,10 @@ func (h *Handler) List(c *gin.Context) {
 	spaceID := middleware.SpaceID(c)
 	limit := parseLimit(pageSizeQuery(c))
 
-	sort := c.Query("sort")
-	if sort == "" {
-		sort = skillrepo.SortComprehensive
-	}
+	sort, useCursor := listSortAndPagination(c.Query("sort"))
 	if !validSortModes[sort] {
 		apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "invalid sort parameter, must be one of: comprehensive, latest, downloads, views", nil, "")
 		return
-	}
-
-	page := parsePage(c.Query("page"))
-	offset := (page - 1) * limit
-	if rawOffset := c.Query("offset"); rawOffset != "" {
-		offset = parseOffset(rawOffset)
-		if limit > 0 {
-			page = offset/limit + 1
-		}
 	}
 
 	result, err := h.svc.List(c.Request.Context(), skillsvc.ListParams{
@@ -124,15 +112,26 @@ func (h *Handler) List(c *gin.Context) {
 		Tags:       tagFilters(c),
 		Cursor:     c.Query("cursor"),
 		Limit:      limit,
-		Offset:     offset,
 		Sort:       sort,
+		UseCursor:  useCursor,
 	})
 	if err != nil {
 		apiresponse.Fail(c, http.StatusInternalServerError, errcode.InternalError, "internal error", nil, "")
 		return
 	}
 
-	apiresponse.Offset(c, result.Items, result.Total, page, limit)
+	nextCursor := ""
+	if result.NextCursor != nil {
+		nextCursor = *result.NextCursor
+	}
+	apiresponse.Cursor(c, result.Items, nextCursor != "", nextCursor)
+}
+
+func listSortAndPagination(sort string) (string, bool) {
+	if sort == "" {
+		return skillrepo.SortLatest, true
+	}
+	return sort, true
 }
 
 // ListMine godoc
