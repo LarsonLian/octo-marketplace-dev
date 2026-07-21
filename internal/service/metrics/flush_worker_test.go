@@ -363,7 +363,7 @@ func (r *contextCancelRepo) UpsertCounts(ctx context.Context, resourceType, reso
 	return r.mockRepo.UpsertCounts(ctx, resourceType, resourceID, viewDelta, downloadDelta, installDelta)
 }
 
-func TestFlushWorker_NonSkillType_Skipped(t *testing.T) {
+func TestFlushWorker_NonSkillType_Requeued(t *testing.T) {
 	repo := &mockRepo{}
 	w, mr := setupTestWorker(t, repo)
 
@@ -378,6 +378,10 @@ func TestFlushWorker_NonSkillType_Skipped(t *testing.T) {
 	// Should not process non-skill types in v1
 	if len(repo.calls) != 0 {
 		t.Fatalf("expected 0 upserts for non-skill type, got %d", len(repo.calls))
+	}
+	members, _ := mr.Members("metrics:dirty")
+	if len(members) != 1 || members[0] != "mcp:mcp-1" {
+		t.Fatalf("expected non-skill member to be requeued, got %v", members)
 	}
 }
 

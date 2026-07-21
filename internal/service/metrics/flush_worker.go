@@ -166,6 +166,8 @@ func (w *FlushWorker) processMember(ctx context.Context, member string, totalPro
 
 	// v1: only process "skill" type
 	if resourceType != "skill" {
+		log.Printf("[flush-worker] WARN: unsupported dirty resource type %q for member %q, requeueing", resourceType, member)
+		*failedMembers = append(*failedMembers, member)
 		return
 	}
 

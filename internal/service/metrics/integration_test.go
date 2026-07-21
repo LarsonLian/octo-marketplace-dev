@@ -461,9 +461,9 @@ func TestIntegration_ZeroDelta_SkipsUpsert(t *testing.T) {
 	}
 }
 
-// --- 8. Non-skill resource type is skipped ---
+// --- 8. Non-skill resource type is requeued ---
 
-func TestIntegration_NonSkillType_SkippedByFlush(t *testing.T) {
+func TestIntegration_NonSkillType_RequeuedByFlush(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
 	ctx := context.Background()
@@ -476,9 +476,17 @@ func TestIntegration_NonSkillType_SkippedByFlush(t *testing.T) {
 	w := NewFlushWorker(rdb, repo, DefaultFlushWorkerConfig())
 	w.flush(ctx)
 
-	// v1 only processes "skill" — mcp should be skipped
+	// v1 only processes "skill" — unsupported types must be requeued because
+	// SPOP already removed them from the dirty set.
 	if len(repo.calls) != 0 {
 		t.Fatalf("expected 0 upserts for non-skill type, got %d", len(repo.calls))
+	}
+	isMember, err := rdb.SIsMember(ctx, "metrics:dirty", "mcp:mcp-001").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !isMember {
+		t.Fatal("non-skill member should be re-added to dirty set")
 	}
 }
 

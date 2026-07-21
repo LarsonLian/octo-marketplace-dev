@@ -380,11 +380,10 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (*SkillItem, error
 		ChangedBy: p.UserID,
 	})
 	if err != nil {
-		// Best-effort cleanup of uploaded objects on DB failure
-		go func() {
-			_ = s.store.DeleteObject(context.Background(), zipObjectKey)
-			_ = s.store.DeleteObject(context.Background(), skillMdObjectKey)
-		}()
+		// Best-effort cleanup of uploaded objects on DB failure. Keep this
+		// synchronous so shutdown cannot orphan the freshly-written artifacts.
+		_ = s.store.DeleteObject(context.Background(), zipObjectKey)
+		_ = s.store.DeleteObject(context.Background(), skillMdObjectKey)
 		if errors.Is(err, skillrepo.ErrParseTaskAlreadyConsumed) {
 			return nil, ErrParseTaskConsumed
 		}

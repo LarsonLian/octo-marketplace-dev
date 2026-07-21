@@ -105,6 +105,57 @@ func TestUpdateDuplicateVersionDoesNotDeletePublishedObjects(t *testing.T) {
 	}
 }
 
+func TestCreateDBFailureSynchronouslyDeletesNewArtifacts(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	zipData := makeTestZip("Create Cleanup", "desc", "1.0.0")
+	store := &fakeStorage{getData: zipData}
+	ids := []string{"skill-new", "version-new"}
+	idGen := func() string {
+		id := ids[0]
+		ids = ids[1:]
+		return id
+	}
+	svc := New(skillrepo.New(db), categoryrepo.New(db), store, idGen)
+
+	mock.ExpectQuery("SELECT .+ FROM parse_tasks WHERE id").
+		WithArgs("task-create-fail").
+		WillReturnRows(parseTaskRowsForSecurityTest().
+			AddRow("task-create-fail", "upload-create", "skill.zip", int64(len(zipData)),
+				"skill-uploads/upload-create/skill.zip", testSHA256Hex(zipData),
+				"success", "Create Cleanup", "desc", "1.0.0",
+				[]byte(`[]`), "", "", "", nil, 0,
+				"user-1", "space-1", ""))
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE parse_tasks SET status").
+		WithArgs("task-create-fail", "user-1", "space-1").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectRollback()
+
+	_, err = svc.Create(context.Background(), CreateParams{
+		ParseTaskID: "task-create-fail",
+		UserID:      "user-1",
+		UserName:    "User One",
+		SpaceID:     "space-1",
+	})
+	if !errors.Is(err, ErrParseTaskConsumed) {
+		t.Fatalf("Create error = %v, want ErrParseTaskConsumed", err)
+	}
+
+	wantZip := "skills/skill-new/versions/version-new/skill.zip"
+	wantMD := "skills/skill-new/versions/version-new/SKILL.md"
+	if len(store.deleteKeys) != 2 || store.deleteKeys[0] != wantZip || store.deleteKeys[1] != wantMD {
+		t.Fatalf("deleteKeys=%v, want synchronous cleanup of %q and %q", store.deleteKeys, wantZip, wantMD)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestAdminReuploadDuplicateVersionDoesNotDeletePublishedObjects(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
