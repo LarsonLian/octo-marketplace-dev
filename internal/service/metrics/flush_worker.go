@@ -76,6 +76,20 @@ const (
 	keyPrefix    = "metrics:"
 )
 
+var drainCountersScript = goredis.NewScript(`
+local view = redis.call("GETSET", KEYS[1], "0")
+local download = redis.call("GETSET", KEYS[2], "0")
+local install = redis.call("GETSET", KEYS[3], "0")
+return {view or "0", download or "0", install or "0"}
+`)
+
+var restoreCountersScript = goredis.NewScript(`
+if tonumber(ARGV[1]) > 0 then redis.call("INCRBY", KEYS[1], ARGV[1]) end
+if tonumber(ARGV[2]) > 0 then redis.call("INCRBY", KEYS[2], ARGV[2]) end
+if tonumber(ARGV[3]) > 0 then redis.call("INCRBY", KEYS[3], ARGV[3]) end
+return 1
+`)
+
 func (w *FlushWorker) flush(ctx context.Context) {
 	start := time.Now()
 
@@ -207,19 +221,17 @@ func (w *FlushWorker) getAndResetCounters(ctx context.Context, resourceType, res
 	downloadKey := fmt.Sprintf("%s%s:%s:download", keyPrefix, resourceType, resourceID)
 	installKey := fmt.Sprintf("%s%s:%s:install", keyPrefix, resourceType, resourceID)
 
-	// Use pipeline to atomically GetSet (GetSet replaces value with "0" and returns old value)
-	pipe := w.rdb.Pipeline()
-	viewCmd := pipe.GetSet(ctx, viewKey, "0")
-	downloadCmd := pipe.GetSet(ctx, downloadKey, "0")
-	installCmd := pipe.GetSet(ctx, installKey, "0")
-	_, err = pipe.Exec(ctx)
+	raw, err := drainCountersScript.Run(ctx, w.rdb, []string{viewKey, downloadKey, installKey}).Result()
 	if err != nil && err != goredis.Nil {
-		return 0, 0, 0, fmt.Errorf("pipeline exec: %w", err)
+		return 0, 0, 0, fmt.Errorf("drain counters: %w", err)
 	}
-
-	viewDelta = parseCounterResult(viewCmd)
-	downloadDelta = parseCounterResult(downloadCmd)
-	installDelta = parseCounterResult(installCmd)
+	values, ok := raw.([]interface{})
+	if !ok || len(values) != 3 {
+		return 0, 0, 0, fmt.Errorf("drain counters: unexpected script result %T", raw)
+	}
+	viewDelta = parseCounterValue(values[0])
+	downloadDelta = parseCounterValue(values[1])
+	installDelta = parseCounterValue(values[2])
 	return viewDelta, downloadDelta, installDelta, nil
 }
 
@@ -230,26 +242,21 @@ func (w *FlushWorker) restoreCounters(ctx context.Context, resourceType, resourc
 	downloadKey := fmt.Sprintf("%s%s:%s:download", keyPrefix, resourceType, resourceID)
 	installKey := fmt.Sprintf("%s%s:%s:install", keyPrefix, resourceType, resourceID)
 
-	pipe := w.rdb.Pipeline()
-	if viewDelta > 0 {
-		pipe.IncrBy(ctx, viewKey, viewDelta)
-	}
-	if downloadDelta > 0 {
-		pipe.IncrBy(ctx, downloadKey, downloadDelta)
-	}
-	if installDelta > 0 {
-		pipe.IncrBy(ctx, installKey, installDelta)
-	}
-	if _, err := pipe.Exec(ctx); err != nil {
+	_, err := restoreCountersScript.Run(ctx, w.rdb, []string{viewKey, downloadKey, installKey},
+		strconv.FormatInt(viewDelta, 10),
+		strconv.FormatInt(downloadDelta, 10),
+		strconv.FormatInt(installDelta, 10),
+	).Result()
+	if err != nil {
 		log.Printf("[flush-worker] CRITICAL: failed to restore counters for %s/%s: %v (data may be lost)", resourceType, resourceID, err)
 	}
 }
 
-func parseCounterResult(cmd *goredis.StringCmd) int64 {
-	val, err := cmd.Result()
-	if err != nil || val == "" {
+func parseCounterValue(raw interface{}) int64 {
+	if raw == nil {
 		return 0
 	}
+	val := fmt.Sprint(raw)
 	n, err := strconv.ParseInt(val, 10, 64)
 	if err != nil {
 		return 0

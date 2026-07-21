@@ -620,7 +620,7 @@ func TestWorkerReuploadNameMismatchFailsBeforeDuplicateCheck(t *testing.T) {
 		WithArgs("skill-1", "space-1", "user-1").
 		WillReturnRows(sqlmock.NewRows([]string{"name"}).AddRow("ui-skill-case-1784277863"))
 	mock.ExpectExec("UPDATE parse_tasks SET status = 'failed', error_code = \\?, error_message = \\? WHERE id = \\?").
-		WithArgs("SKILL_NAME_MISMATCH", `重新上传的 Skill 与当前 Skill 不一致：上传 Skill name 为 "gstack-guard"，当前 Skill name 为 "ui-skill-case-1784277863"`, "task-1").
+		WithArgs("SKILL_NAME_MISMATCH", `Uploaded Skill does not match the target Skill.`, "task-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	worker := NewWorker(zipStorage{data: zipData}, NewRepo(db), db, WorkerConfig{PoolSize: 5, ParseTimeout: 30 * time.Second})

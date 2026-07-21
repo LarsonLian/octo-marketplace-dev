@@ -458,28 +458,42 @@ func TestFlushWorker_GracefulShutdown(t *testing.T) {
 	}
 }
 
-func TestParseCounterResult_EdgeCases(t *testing.T) {
-	mr := miniredis.RunT(t)
-	rdb := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
-	ctx := context.Background()
-
-	// Key doesn't exist — GetSet returns redis.Nil
-	pipe := rdb.Pipeline()
-	cmd := pipe.GetSet(ctx, "nonexistent", "0")
-	_, _ = pipe.Exec(ctx)
-	result := parseCounterResult(cmd)
-	if result != 0 {
-		t.Errorf("expected 0 for nonexistent key, got %d", result)
+func TestParseCounterValue_EdgeCases(t *testing.T) {
+	if got := parseCounterValue(nil); got != 0 {
+		t.Errorf("expected 0 for nil, got %d", got)
 	}
+	if got := parseCounterValue("notanumber"); got != 0 {
+		t.Errorf("expected 0 for non-numeric value, got %d", got)
+	}
+	if got := parseCounterValue("42"); got != 42 {
+		t.Errorf("expected 42, got %d", got)
+	}
+}
 
-	// Key with non-numeric value
-	mr.Set("bad", "notanumber")
-	pipe = rdb.Pipeline()
-	cmd = pipe.GetSet(ctx, "bad", "0")
-	_, _ = pipe.Exec(ctx)
-	result = parseCounterResult(cmd)
-	if result != 0 {
-		t.Errorf("expected 0 for non-numeric value, got %d", result)
+func TestFlushWorker_DrainCountersUsesAtomicScript(t *testing.T) {
+	repo := &mockRepo{}
+	w, mr := setupTestWorker(t, repo)
+
+	ctx := context.Background()
+	mr.Set("metrics:skill:scripted:view", "4")
+	mr.Set("metrics:skill:scripted:download", "3")
+	mr.Set("metrics:skill:scripted:install", "2")
+
+	view, download, install, err := w.getAndResetCounters(ctx, "skill", "scripted")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view != 4 || download != 3 || install != 2 {
+		t.Fatalf("deltas = (%d,%d,%d), want (4,3,2)", view, download, install)
+	}
+	for _, key := range []string{"view", "download", "install"} {
+		got, err := mr.Get("metrics:skill:scripted:" + key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != "0" {
+			t.Fatalf("%s counter = %q, want 0", key, got)
+		}
 	}
 }
 

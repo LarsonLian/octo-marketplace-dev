@@ -446,10 +446,10 @@ func (w *Worker) checkReuploadNameMatch(ctx context.Context, name, spaceID, owne
 	}
 	if err != nil {
 		log.Printf("[parse-worker] checkReuploadNameMatch query error: %v", err)
-		return "内部错误：无法验证重新上传的 Skill 名称"
+		return "internal error: unable to verify reuploaded Skill name"
 	}
 	if name != currentName {
-		return fmt.Sprintf("重新上传的 Skill 与当前 Skill 不一致：上传 Skill name 为 %q，当前 Skill name 为 %q", name, currentName)
+		return fmt.Sprintf("uploaded Skill name %q does not match target Skill name %q", name, currentName)
 	}
 	return ""
 }
@@ -477,7 +477,7 @@ func (w *Worker) checkNameDuplicate(ctx context.Context, name, spaceID, ownerID,
 	}
 	if err != nil {
 		log.Printf("[parse-worker] checkNameDuplicate query error: %v", err)
-		return "内部错误：无法验证名称唯一性"
+		return "internal error: unable to verify Skill name uniqueness"
 	}
 	return fmt.Sprintf("skill name \"%s\" 已存在（ID: %s），请使用其他名称", name, existingID)
 }

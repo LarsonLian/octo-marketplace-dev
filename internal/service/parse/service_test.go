@@ -339,7 +339,7 @@ func TestGetParseStatusMasksStoredFailureDetailsAndSanitizesReadme(t *testing.T)
 		t.Fatalf("unexpected public message %q", failedResult.Error.Message)
 	}
 
-	mismatchMessage := `重新上传的 Skill 与当前 Skill 不一致：上传 Skill name 为 "gstack-guard"，当前 Skill name 为 "octo-style"`
+	mismatchMessage := `uploaded Skill name "gstack-guard" does not match target Skill name "octo-style"`
 	mismatchRows := sqlmock.NewRows([]string{
 		"id", "upload_id", "file_name", "file_size", "file_url", "status",
 		"error_code", "error_message",
@@ -363,8 +363,8 @@ func TestGetParseStatusMasksStoredFailureDetailsAndSanitizesReadme(t *testing.T)
 	if mismatchResult.Error == nil {
 		t.Fatal("expected mismatch error payload")
 	}
-	if mismatchResult.Error.Message != mismatchMessage {
-		t.Fatalf("mismatch message = %q, want %q", mismatchResult.Error.Message, mismatchMessage)
+	if mismatchResult.Error.Message != publicParseErrorMessage("SKILL_NAME_MISMATCH") {
+		t.Fatalf("mismatch message = %q, want stable public message", mismatchResult.Error.Message)
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {

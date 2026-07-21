@@ -183,10 +183,11 @@ func (h *Handler) BotPublishSkill(c *gin.Context) {
 	// Bot publish is intentionally detached from the HTTP request context:
 	// server write deadlines or client disconnects must not leave a parse task
 	// consumed while the follow-up skill creation is cancelled halfway through.
-	publishCtx := context.WithoutCancel(c.Request.Context())
-	parseCtx, parseCancel := context.WithTimeout(publishCtx, h.botPublishTimeout)
-	defer parseCancel()
-	result, err := h.parseSvc.ParseUploadSync(parseCtx, uploadID, identity.UID)
+	// The detached workflow still has an end-to-end deadline covering parse and
+	// creation so stalled storage or DB dependencies cannot run indefinitely.
+	publishCtx, publishCancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), h.botPublishTimeout)
+	defer publishCancel()
+	result, err := h.parseSvc.ParseUploadSync(publishCtx, uploadID, identity.UID)
 	if err != nil {
 		if errors.Is(err, parse.ErrTaskNotFound) || errors.Is(err, parse.ErrForbidden) {
 			apiresponse.Fail(c, http.StatusNotFound, errcode.NotFound, "upload not found", nil, "")
@@ -201,7 +202,7 @@ func (h *Handler) BotPublishSkill(c *gin.Context) {
 			return
 		}
 		if errors.Is(err, parse.ErrParseIncomplete) {
-			apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "解析任务执行失败，请稍后重试", map[string]any{"parse_error_code": "INTERNAL_ERROR"}, "")
+			apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "Skill parse failed. Please retry later.", map[string]any{"parse_error_code": "INTERNAL_ERROR"}, "")
 			return
 		}
 		log.Printf("[BotPublishSkill] parse upload failed: %v", err)
@@ -237,6 +238,10 @@ func (h *Handler) BotPublishSkill(c *gin.Context) {
 		CreatorName: bot.BotName,
 	})
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			apiresponse.Fail(c, http.StatusGatewayTimeout, errcode.InternalError, "skill publish timed out", nil, "")
+			return
+		}
 		if errors.Is(err, skillsvc.ErrInvalidParseTask) {
 			apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "invalid or unavailable parse task", nil, "")
 			return

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strconv"
 
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -13,6 +14,12 @@ const (
 	metricsKeyPrefix = "metrics:"
 	dirtySetKey      = "metrics:dirty"
 )
+
+var trackEventScript = goredis.NewScript(`
+redis.call("INCRBY", KEYS[1], tonumber(ARGV[1]))
+redis.call("SADD", KEYS[2], ARGV[2])
+return 1
+`)
 
 // Client wraps a Redis client for metrics operations.
 type Client struct {
@@ -43,10 +50,7 @@ func (c *Client) trackEvent(ctx context.Context, resourceType, resourceID, event
 	counterKey := fmt.Sprintf("%s%s:%s:%s", metricsKeyPrefix, resourceType, resourceID, eventType)
 	dirtyMember := fmt.Sprintf("%s:%s", resourceType, resourceID)
 
-	pipe := c.rdb.Pipeline()
-	pipe.Incr(ctx, counterKey)
-	pipe.SAdd(ctx, dirtySetKey, dirtyMember)
-	_, err := pipe.Exec(ctx)
+	_, err := trackEventScript.Run(ctx, c.rdb, []string{counterKey, dirtySetKey}, strconv.FormatInt(1, 10), dirtyMember).Result()
 	if err != nil {
 		log.Printf("[metrics-redis] WARN: failed to track %s for %s/%s: %v", eventType, resourceType, resourceID, err)
 	}

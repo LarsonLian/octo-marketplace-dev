@@ -66,6 +66,24 @@ func TestTrackView_WritesCorrectKeys(t *testing.T) {
 	}
 }
 
+func TestTrackEventUsesAtomicScript(t *testing.T) {
+	client, mr := setupMiniredis(t)
+
+	if err := client.trackEvent(context.Background(), "skill", "scripted", "view"); err != nil {
+		t.Fatal(err)
+	}
+	counter, err := mr.Get("metrics:skill:scripted:view")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counter != "1" {
+		t.Fatalf("counter = %q, want 1", counter)
+	}
+	if ok, err := mr.SIsMember(dirtySetKey, "skill:scripted"); err != nil || !ok {
+		t.Fatalf("dirty member present = %v, err = %v", ok, err)
+	}
+}
+
 func TestTrackDownload_WritesCorrectKeys(t *testing.T) {
 	client, mr := setupMiniredis(t)
 

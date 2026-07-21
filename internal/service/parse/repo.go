@@ -212,7 +212,7 @@ func (r *Repo) TryRecoverStaleParsing(ctx context.Context, id string, staleSecon
 func (r *Repo) MarkRetryExhausted(ctx context.Context, id string) error {
 	_, err := r.db.ExecContext(ctx,
 		`UPDATE parse_tasks SET status = 'failed', error_code = 'PARSE_RETRY_EXHAUSTED',
-		 error_message = '解析任务多次超时，请重新上传'
+		 error_message = 'Skill parse timed out after multiple attempts. Please upload again.'
 		 WHERE id = ? AND status = 'parsing'`,
 		id)
 	return err
