@@ -738,5 +738,6 @@ func (h *Handler) AdminDownload(c *gin.Context) {
 		return
 	}
 
+	// Admin package access is operational maintenance, not marketplace demand.
 	c.Redirect(http.StatusFound, info.DownloadURL)
 }

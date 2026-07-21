@@ -59,6 +59,7 @@ type ParseConfig struct {
 	MaxAttempts       int
 	WorkerPoolSize    int
 	BotPublishTimeout time.Duration
+	DevBotMode        bool
 }
 
 // RedisConfig holds configuration for the Redis connection used by metrics.
@@ -168,7 +169,7 @@ func publicWithOptions(database Pinger, authenticator *marketmiddleware.Authenti
 
 		uploadH := uploadhandler.New(pSvc, skSvc, localStorage, storageCfg.MaxMB)
 		uploadH.SetBotPublishTimeout(parseCfg.BotPublishTimeout)
-		uploadH.SetDevBotMode(!authEnabled)
+		uploadH.SetDevBotMode(parseCfg.DevBotMode)
 		uploadH.SetMetricsService(mSvc)
 		uploadH.Register(v1)
 		uploadH.RegisterAdmin(r, adminAuth)

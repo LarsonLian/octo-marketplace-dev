@@ -116,6 +116,10 @@ func main() {
 	}
 	mcpHandler := handler.NewMCP(mcpSvc)
 	adminMCPHandler := handler.NewAdminMCP(mcpSvc)
+	devBotMode := !cfg.AuthEnabled && cfg.IsDev()
+	if devBotMode {
+		log.Printf("[bot-publish] WARNING: dev bot mode enabled; this must not be active outside local development")
+	}
 
 	// Start flush worker if Redis is configured.
 	flushCtx, flushCancel := context.WithCancel(context.Background())
@@ -171,6 +175,7 @@ func main() {
 			MaxAttempts:       cfg.SkillParseMaxAttempts,
 			WorkerPoolSize:    cfg.SkillParseWorkerPoolSize,
 			BotPublishTimeout: cfg.BotPublishTimeout,
+			DevBotMode:        devBotMode,
 		}, router.RedisConfig{Client: metricsRDB}),
 		ReadHeaderTimeout: cfg.ReadHeaderTimeout,
 		ReadTimeout:       cfg.ReadTimeout,

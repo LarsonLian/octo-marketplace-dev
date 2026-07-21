@@ -1,15 +1,15 @@
 # DEV ONLY — for local octo-marketplace development.
 #
-# The credentials below are intentionally simple and must not be used in
-# production. Production deployment must provide rotated secrets and managed
-# persistence through the OCTO deployment repository.
+# Copy .env.example to .env for local credentials. Production deployment must
+# provide rotated secrets and managed persistence through the OCTO deployment
+# repository.
 services:
   marketplace-service:
     build:
       context: .
       dockerfile: Dockerfile.api
     ports:
-      - "8092:8092"
+      - "127.0.0.1:8092:8092"
     environment:
       APP_ENV: "dev"
       MYSQL_DSN: "marketplace:marketplace@tcp(mysql:3306)/octo_marketplace?charset=utf8mb4&parseTime=true"
@@ -23,8 +23,8 @@ services:
       STORAGE_DRIVER: "oss"
       OSS_ENDPOINT: "http://minio:9000"
       OSS_BUCKET: "octo-marketplace"
-      OSS_ACCESS_KEY: "octoadmin"
-      OSS_SECRET_KEY: "66aac2f912bc5ec8503f54132ac18a32"
+      OSS_ACCESS_KEY: "${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env}"
+      OSS_SECRET_KEY: "${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}"
       OSS_REGION: "us-east-1"
       OSS_PATH_STYLE: "true"
       OSS_PUBLIC_ENDPOINT: "http://127.0.0.1:29000"
@@ -57,7 +57,7 @@ services:
     volumes:
       - mysqldata:/var/lib/mysql
     ports:
-      - "3306:3306"
+      - "127.0.0.1:3306:3306"
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 5s
@@ -69,7 +69,7 @@ services:
     volumes:
       - redisdata:/data
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -80,8 +80,8 @@ services:
     image: minio/minio:RELEASE.2025-04-22T22-12-26Z
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: octoadmin
-      MINIO_ROOT_PASSWORD: 66aac2f912bc5ec8503f54132ac18a32
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}"
       MINIO_API_CORS_ALLOW_ORIGIN: "http://127.0.0.1:3000,http://localhost:3000,http://127.0.0.1:3100,http://localhost:3100,http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:8092,http://localhost:8092"
       HTTP_PROXY: ""
       HTTPS_PROXY: ""
@@ -92,8 +92,8 @@ services:
     volumes:
       - miniodata:/data
     ports:
-      - "29000:9000"
-      - "29001:9001"
+      - "127.0.0.1:29000:9000"
+      - "127.0.0.1:29001:9001"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 5s
@@ -103,6 +103,8 @@ services:
   minio-init:
     image: minio/mc:RELEASE.2025-04-16T18-13-26Z
     environment:
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}"
       HTTP_PROXY: ""
       HTTPS_PROXY: ""
       http_proxy: ""
@@ -117,7 +119,7 @@ services:
       - -c
       - |
         set -e
-        mc alias set local http://minio:9000 octoadmin 66aac2f912bc5ec8503f54132ac18a32
+        mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"
         mc mb --ignore-existing local/octo-marketplace
         mc anonymous set download local/octo-marketplace
     networks:

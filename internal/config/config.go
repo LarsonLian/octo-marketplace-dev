@@ -14,6 +14,7 @@ const (
 )
 
 type Config struct {
+	AppEnv             string
 	MySQLDSN           string
 	OctoAPIURL         string
 	APIPort            string
@@ -89,6 +90,7 @@ func (s StorageConfig) Enabled() bool {
 
 func Load() Config {
 	return Config{
+		AppEnv:             strings.ToLower(env("APP_ENV", "")),
 		MySQLDSN:           env("MYSQL_DSN", ""),
 		OctoAPIURL:         strings.TrimRight(env("OCTO_API_URL", ""), "/"),
 		APIPort:            env("API_PORT", "8092"),
@@ -142,6 +144,11 @@ func Load() Config {
 		OSSDownloadSigned:  envBool("OSS_DOWNLOAD_SIGNED", false),
 		MaxUploadMB:        envInt("MAX_UPLOAD_MB", 20),
 	}
+}
+
+// IsDev reports whether this process is explicitly running in local dev mode.
+func (c Config) IsDev() bool {
+	return strings.EqualFold(c.AppEnv, "dev")
 }
 
 func (c Config) ValidateAPI() error {
