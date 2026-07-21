@@ -560,6 +560,26 @@ func TestWorkerRejectsNonJSONMetadata(t *testing.T) {
 	}
 }
 
+func TestWorkerNameDuplicateIgnoresSoftDeletedRows(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery("SELECT id FROM skills").
+		WithArgs("recreated-skill", "space-1", "user-1").
+		WillReturnError(sql.ErrNoRows)
+
+	worker := NewWorker(zipStorage{}, NewRepo(db), db, WorkerConfig{PoolSize: 1, QueueSize: 1, ParseTimeout: time.Second})
+	if got := worker.checkNameDuplicate(context.Background(), "recreated-skill", "space-1", "user-1", ""); got != "" {
+		t.Fatalf("checkNameDuplicate returned %q, want no duplicate for deleted rows", got)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestWorkerReuploadNameMismatchFailsBeforeDuplicateCheck(t *testing.T) {
 	zipData := createWorkerZip(t, map[string][]byte{
 		"SKILL.md": []byte(strings.Join([]string{
@@ -596,7 +616,7 @@ func TestWorkerReuploadNameMismatchFailsBeforeDuplicateCheck(t *testing.T) {
 	mock.ExpectQuery("SELECT id, upload_id, file_name, file_size, file_url, status,").
 		WithArgs("task-1").
 		WillReturnRows(taskRows)
-	mock.ExpectQuery("SELECT name FROM skills WHERE id = \\? AND space_id = \\? AND owner_id = \\?").
+	mock.ExpectQuery("SELECT name FROM skills WHERE id = \\? AND space_id = \\? AND owner_id = \\? AND is_deleted = 0").
 		WithArgs("skill-1", "space-1", "user-1").
 		WillReturnRows(sqlmock.NewRows([]string{"name"}).AddRow("ui-skill-case-1784277863"))
 	mock.ExpectExec("UPDATE parse_tasks SET status = 'failed', error_code = \\?, error_message = \\? WHERE id = \\?").

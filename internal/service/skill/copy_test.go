@@ -184,7 +184,7 @@ func TestCreate_PutObjectSuccess_DBMutationOccurs(t *testing.T) {
 	// Expect the transaction: BEGIN, consume task, insert skill, insert version, upsert tags, COMMIT
 	mock.ExpectBegin()
 	mock.ExpectExec("UPDATE parse_tasks SET status").
-		WithArgs("task-1").
+		WithArgs("task-1", "user-1", "space-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("INSERT INTO skills").
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -476,7 +476,7 @@ func TestCreate_SourceSkillID_FromParam(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectExec("UPDATE parse_tasks SET status").
-		WithArgs("task-f").
+		WithArgs("task-f", "user-1", "space-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("INSERT INTO skills").
 		WillReturnResult(sqlmock.NewResult(0, 1))

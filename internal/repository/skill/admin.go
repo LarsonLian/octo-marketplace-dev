@@ -123,11 +123,12 @@ func (r *Repo) AdminList(ctx context.Context, f AdminListFilter) (*ListResult, e
 	return result, nil
 }
 
-// AdminConsumeParseTask marks a parse task as consumed without owner/space checks.
-// Only requires the task to have status='success'.
-func (r *Repo) AdminConsumeParseTask(ctx context.Context, id string) error {
+// AdminConsumeParseTask marks an admin-owned parse task as consumed.
+func (r *Repo) AdminConsumeParseTask(ctx context.Context, id, ownerID, spaceID string) error {
 	res, err := r.db.ExecContext(ctx,
-		"UPDATE parse_tasks SET status = 'consumed' WHERE id = ? AND status = 'success'", id)
+		`UPDATE parse_tasks SET status = 'consumed'
+		 WHERE id = ? AND status = 'success' AND owner_id = ? AND space_id = ?`,
+		id, ownerID, spaceID)
 	if err != nil {
 		return err
 	}
@@ -142,20 +143,19 @@ func (r *Repo) AdminConsumeParseTask(ctx context.Context, id string) error {
 }
 
 // AdminUpdateSkillAndConsumeTask updates a skill, inserts a new version record,
-// and marks the parse task as consumed within a single transaction without
-// owner/space checks on the parse task (admin-only).
-func (r *Repo) AdminUpdateSkillAndConsumeTask(ctx context.Context, skillID, ownerID string, p UpdateParams, parseTaskID, taskSkillID string, ver *model.SkillVersion) error {
+// and marks the parse task as consumed within a single transaction.
+func (r *Repo) AdminUpdateSkillAndConsumeTask(ctx context.Context, skillID, ownerID, taskOwnerID, taskSpaceID string, p UpdateParams, parseTaskID, taskSkillID string, ver *model.SkillVersion) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
-	// Consume parse task first (acts as a lock, no owner/space check)
+	// Consume parse task first (acts as a lock and verifies admin task ownership)
 	res, err := tx.ExecContext(ctx,
 		`UPDATE parse_tasks SET status = 'consumed'
-		 WHERE id = ? AND status = 'success' AND (skill_id = ? OR skill_id = '' OR skill_id IS NULL)`,
-		parseTaskID, taskSkillID)
+		 WHERE id = ? AND status = 'success' AND owner_id = ? AND space_id = ? AND (skill_id = ? OR skill_id = '' OR skill_id IS NULL)`,
+		parseTaskID, taskOwnerID, taskSpaceID, taskSkillID)
 	if err != nil {
 		return err
 	}

@@ -84,14 +84,16 @@ func (s *Service) AdminGet(ctx context.Context, id string) (*SkillItem, error) {
 	return &item, nil
 }
 
-// AdminCreate creates a new public skill from a completed parse task (admin, no owner/space checks).
+// AdminCreate creates a new public skill from a completed admin parse task.
 func (s *Service) AdminCreate(ctx context.Context, p AdminCreateParams) (*SkillItem, error) {
-	// Validate parse task (no owner/space check for admin)
 	pt, err := s.repo.GetParseTask(ctx, p.ParseTaskID)
 	if err != nil {
 		return nil, err
 	}
 	if pt == nil || pt.Status != "success" {
+		return nil, ErrInvalidParseTask
+	}
+	if pt.OwnerID != p.AdminUID || pt.SpaceID != skillrepo.GlobalTagSpaceID {
 		return nil, ErrInvalidParseTask
 	}
 	// Reject reupload tasks
@@ -427,12 +429,14 @@ func (s *Service) AdminReupload(ctx context.Context, id string, p AdminReuploadP
 		return nil, ErrNotFound
 	}
 
-	// Validate parse task (no owner/space checks for admin)
 	pt, err := s.repo.GetParseTask(ctx, p.ParseTaskID)
 	if err != nil {
 		return nil, err
 	}
 	if pt == nil || pt.Status != "success" {
+		return nil, ErrInvalidParseTask
+	}
+	if pt.OwnerID != p.AdminUID || pt.SpaceID != skillrepo.GlobalTagSpaceID {
 		return nil, ErrInvalidParseTask
 	}
 	if pt.SkillID != "" && pt.SkillID != id {
@@ -566,7 +570,7 @@ func (s *Service) AdminReupload(ctx context.Context, id string, p AdminReuploadP
 	repoParams.CurrentVersionID = &versionID
 
 	// Transactionally: consume parse task, update skill, and insert version
-	err = s.repo.AdminUpdateSkillAndConsumeTask(ctx, id, row.OwnerID, repoParams, p.ParseTaskID, id, &model.SkillVersion{
+	err = s.repo.AdminUpdateSkillAndConsumeTask(ctx, id, row.OwnerID, p.AdminUID, skillrepo.GlobalTagSpaceID, repoParams, p.ParseTaskID, id, &model.SkillVersion{
 		ID:        versionID,
 		SkillID:   id,
 		Version:   version,

@@ -13,6 +13,7 @@ import (
 	apiresponse "github.com/Mininglamp-OSS/octo-marketplace/internal/api/response"
 	"github.com/Mininglamp-OSS/octo-marketplace/internal/middleware"
 	"github.com/Mininglamp-OSS/octo-marketplace/internal/model"
+	skillrepo "github.com/Mininglamp-OSS/octo-marketplace/internal/repository/skill"
 	metricssvc "github.com/Mininglamp-OSS/octo-marketplace/internal/service/metrics"
 	"github.com/Mininglamp-OSS/octo-marketplace/internal/service/parse"
 	skillsvc "github.com/Mininglamp-OSS/octo-marketplace/internal/service/skill"
@@ -86,13 +87,17 @@ func (h *Handler) SetDevBotMode(enabled bool) {
 
 // RegisterAdmin registers admin upload/parse/download routes on the admin group.
 // These reuse the same handlers since the admin auth middleware injects identity
-// in the same way, and the admin is treated as the ownerID of the upload.
+// in the same way. Admin uploads are scoped to the global Skill space.
 func (h *Handler) RegisterAdmin(r *gin.Engine, adminAuth *middleware.AdminAuthenticator) {
 	admin := r.Group("/api/v1/admin", adminAuth.Handler())
 	admin.POST("/skill_uploads", h.InitUpload)
 	admin.POST("/skill_uploads/:skill_upload_id/parse", h.TriggerParse)
 	admin.GET("/skill_parse_tasks/:skill_parse_task_id", h.PollParse)
 	admin.GET("/skills/:skill_id/download", h.AdminDownload)
+}
+
+func isAdminRoute(c *gin.Context) bool {
+	return strings.HasPrefix(c.FullPath(), "/api/v1/admin/")
 }
 
 func legacyUploadEndpoint(successor string) gin.HandlerFunc {
@@ -369,6 +374,9 @@ func (h *Handler) InitUpload(c *gin.Context) {
 		return
 	}
 	spaceID := middleware.SpaceID(c)
+	if isAdminRoute(c) {
+		spaceID = skillrepo.GlobalTagSpaceID
+	}
 
 	var req InitUploadRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

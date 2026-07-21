@@ -438,7 +438,7 @@ func (w *Worker) checkReuploadNameMatch(ctx context.Context, name, spaceID, owne
 
 	var currentName string
 	err := w.db.QueryRowContext(ctx,
-		"SELECT name FROM skills WHERE id = ? AND space_id = ? AND owner_id = ?",
+		"SELECT name FROM skills WHERE id = ? AND space_id = ? AND owner_id = ? AND is_deleted = 0",
 		skillID, spaceID, ownerID,
 	).Scan(&currentName)
 	if err == sql.ErrNoRows {
@@ -459,7 +459,7 @@ func (w *Worker) checkReuploadNameMatch(ctx context.Context, name, spaceID, owne
 func (w *Worker) checkNameDuplicate(ctx context.Context, name, spaceID, ownerID, excludeSkillID string) string {
 	query := `
 		SELECT id FROM skills
-		WHERE name = ? AND space_id = ? AND owner_id = ?
+		WHERE name = ? AND space_id = ? AND owner_id = ? AND is_deleted = 0
 	`
 	args := []interface{}{name, spaceID, ownerID}
 

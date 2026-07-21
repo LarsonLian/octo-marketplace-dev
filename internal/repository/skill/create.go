@@ -114,8 +114,9 @@ func (r *Repo) CreateSkillAndConsumeTask(ctx context.Context, parseTaskID string
 
 	// Mark parse task as consumed first (acts as a lock against duplicates)
 	res, err := tx.ExecContext(ctx,
-		"UPDATE parse_tasks SET status = 'consumed' WHERE id = ? AND status = 'success'",
-		parseTaskID)
+		`UPDATE parse_tasks SET status = 'consumed'
+		 WHERE id = ? AND status = 'success' AND owner_id = ? AND space_id = ? AND (skill_id = '' OR skill_id IS NULL)`,
+		parseTaskID, p.OwnerID, p.SpaceID)
 	if err != nil {
 		return nil, err
 	}

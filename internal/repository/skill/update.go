@@ -127,8 +127,8 @@ func (r *Repo) UpdateWithTags(ctx context.Context, id, spaceID, ownerID string, 
 	sets, args := buildUpdateSets(p)
 	var affected int64
 	if len(sets) > 0 {
-		query := fmt.Sprintf("UPDATE skills SET %s WHERE id = ? AND is_deleted = 0", strings.Join(sets, ", "))
-		args = append(args, id)
+		query := fmt.Sprintf("UPDATE skills SET %s WHERE id = ? AND owner_id = ? AND space_id = ? AND is_deleted = 0", strings.Join(sets, ", "))
+		args = append(args, id, ownerID, spaceID)
 
 		result, err := tx.ExecContext(ctx, query, args...)
 		if err != nil {

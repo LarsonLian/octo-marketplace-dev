@@ -56,7 +56,7 @@ func TestCreate_FullFlow_VerifiesStoragePath(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectExec("UPDATE parse_tasks SET status").
-		WithArgs("task-int-1").
+		WithArgs("task-int-1", "user-int", "space-int").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("INSERT INTO skills").
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -172,6 +172,7 @@ func TestUpdate_ReuploadFlow_NewVersionGenerated(t *testing.T) {
 	// Order: consume parse task → update skill → insert version → upsert tags
 	mock.ExpectBegin()
 	mock.ExpectExec("UPDATE parse_tasks SET status").
+		WithArgs("task-reup", "user-reup", "space-reup", "skill-reup").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("UPDATE skills SET").
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -579,7 +580,7 @@ func TestUploadPrefix_IsSkillUploads(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectExec("UPDATE parse_tasks SET status").
-		WithArgs("task-prefix").
+		WithArgs("task-prefix", "user-p", "space-p").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("INSERT INTO skills").
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -804,7 +805,7 @@ func TestCreate_ZipRewrite_ExtractsSkillMD(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectExec("UPDATE parse_tasks SET status").
-		WithArgs("task-ext").
+		WithArgs("task-ext", "user-ext", "space-ext").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("INSERT INTO skills").
 		WillReturnResult(sqlmock.NewResult(0, 1))

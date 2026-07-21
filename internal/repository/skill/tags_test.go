@@ -72,7 +72,7 @@ func TestAdminUpdateSkillAndConsumeTaskUpsertsGlobalTags(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectExec("UPDATE parse_tasks SET status = 'consumed'").
-		WithArgs("task-1", "skill-1").
+		WithArgs("task-1", "admin-1", GlobalTagSpaceID, "skill-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("UPDATE skills SET tags = \\? WHERE id = \\? AND is_deleted = 0").
 		WithArgs(`["official"]`, "skill-1").
@@ -86,6 +86,8 @@ func TestAdminUpdateSkillAndConsumeTaskUpsertsGlobalTags(t *testing.T) {
 		context.Background(),
 		"skill-1",
 		"admin-1",
+		"admin-1",
+		GlobalTagSpaceID,
 		UpdateParams{
 			Tags:     json.RawMessage(`["official"]`),
 			TagNames: []string{"official"},
