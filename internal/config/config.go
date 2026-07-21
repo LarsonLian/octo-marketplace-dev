@@ -8,6 +8,11 @@ import (
 	"time"
 )
 
+const (
+	DefaultHTTPWriteTimeout  = 150 * time.Second
+	DefaultBotPublishTimeout = 2 * time.Minute
+)
+
 type Config struct {
 	MySQLDSN           string
 	OctoAPIURL         string
@@ -25,6 +30,7 @@ type Config struct {
 	WriteTimeout       time.Duration
 	IdleTimeout        time.Duration
 	ProbeAllowPrivate  bool
+	BotPublishTimeout  time.Duration
 
 	// Parse worker configuration for skill zip async parsing.
 	SkillParseTimeout        time.Duration // single parse execution timeout
@@ -96,9 +102,10 @@ func Load() Config {
 		DevSpaceID:         env("DEV_SPACE_ID", "dev-space"),
 		ReadHeaderTimeout:  envDuration("HTTP_READ_HEADER_TIMEOUT", 5*time.Second),
 		ReadTimeout:        envDuration("HTTP_READ_TIMEOUT", 15*time.Second),
-		WriteTimeout:       envDuration("HTTP_WRITE_TIMEOUT", 30*time.Second),
+		WriteTimeout:       envDuration("HTTP_WRITE_TIMEOUT", DefaultHTTPWriteTimeout),
 		IdleTimeout:        envDuration("HTTP_IDLE_TIMEOUT", 60*time.Second),
 		ProbeAllowPrivate:  envBool("PROBE_ALLOW_PRIVATE", false),
+		BotPublishTimeout:  envDuration("BOT_PUBLISH_TIMEOUT", DefaultBotPublishTimeout),
 
 		SkillParseTimeout:        envDuration("SKILL_PARSE_TIMEOUT", 1*time.Minute),
 		SkillParseStaleTimeout:   envDuration("SKILL_PARSE_STALE_TIMEOUT", 5*time.Minute),
@@ -148,6 +155,9 @@ func (c Config) ValidateAPI() error {
 	// so a legitimately-running parse task is not prematurely reclaimed.
 	if c.SkillParseStaleTimeout <= c.SkillParseTimeout {
 		return fmt.Errorf("SKILL_PARSE_STALE_TIMEOUT (%s) must be greater than SKILL_PARSE_TIMEOUT (%s)", c.SkillParseStaleTimeout, c.SkillParseTimeout)
+	}
+	if c.WriteTimeout > 0 && c.BotPublishTimeout > 0 && c.WriteTimeout <= c.BotPublishTimeout {
+		return fmt.Errorf("HTTP_WRITE_TIMEOUT (%s) must be greater than BOT_PUBLISH_TIMEOUT (%s)", c.WriteTimeout, c.BotPublishTimeout)
 	}
 	return validatePort(c.APIPort, "API_PORT")
 }

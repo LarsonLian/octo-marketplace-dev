@@ -54,15 +54,16 @@ type StorageConfig struct {
 
 // ParseConfig holds parse worker/service configuration passed from the caller.
 type ParseConfig struct {
-	ParseTimeout   time.Duration
-	StaleTimeout   time.Duration
-	MaxAttempts    int
-	WorkerPoolSize int
+	ParseTimeout      time.Duration
+	StaleTimeout      time.Duration
+	MaxAttempts       int
+	WorkerPoolSize    int
+	BotPublishTimeout time.Duration
 }
 
 // RedisConfig holds configuration for the Redis connection used by metrics.
 type RedisConfig struct {
-	URL string // e.g. "redis://localhost:6379/0"
+	Client *goredis.Client
 }
 
 func Public(database Pinger, authenticator *marketmiddleware.Authenticator, adminAuth *marketmiddleware.AdminAuthenticator, storageCfg StorageConfig, mcp *handler.MCP, adminMCP *handler.AdminMCP, parseCfg ParseConfig, redisCfg ...RedisConfig) *gin.Engine {
@@ -145,13 +146,9 @@ func publicWithOptions(database Pinger, authenticator *marketmiddleware.Authenti
 
 		// Wire up metrics service and handler.
 		var mSvc *metricssvc.Service
-		if redisCfg.URL != "" {
-			opts, err := goredis.ParseURL(redisCfg.URL)
-			if err == nil {
-				rdb := goredis.NewClient(opts)
-				metricsRedisClient := metricsredis.NewClient(rdb)
-				mSvc = metricssvc.New(metricsRedisClient)
-			}
+		if redisCfg.Client != nil {
+			metricsRedisClient := metricsredis.NewClient(redisCfg.Client)
+			mSvc = metricssvc.New(metricsRedisClient)
 		}
 		if mSvc == nil {
 			mSvc = metricssvc.New(nil)
@@ -170,6 +167,7 @@ func publicWithOptions(database Pinger, authenticator *marketmiddleware.Authenti
 		})
 
 		uploadH := uploadhandler.New(pSvc, skSvc, localStorage, storageCfg.MaxMB)
+		uploadH.SetBotPublishTimeout(parseCfg.BotPublishTimeout)
 		uploadH.SetDevBotMode(!authEnabled)
 		uploadH.SetMetricsService(mSvc)
 		uploadH.Register(v1)

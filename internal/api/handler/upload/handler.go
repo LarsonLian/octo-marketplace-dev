@@ -20,16 +20,17 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const botPublishTimeout = 2 * time.Minute
+const defaultBotPublishTimeout = 2 * time.Minute
 
 // Handler handles HTTP requests for upload, parse, and download.
 type Handler struct {
-	parseSvc     *parse.Service
-	skillSvc     *skillsvc.Service
-	metricsSvc   *metricssvc.Service
-	localStorage *storage.LocalStorage // nil when not using local storage
-	maxUploadMB  int
-	devBotMode   bool
+	parseSvc          *parse.Service
+	skillSvc          *skillsvc.Service
+	metricsSvc        *metricssvc.Service
+	localStorage      *storage.LocalStorage // nil when not using local storage
+	maxUploadMB       int
+	devBotMode        bool
+	botPublishTimeout time.Duration
 }
 
 // New creates an upload handler.
@@ -39,10 +40,18 @@ func New(parseSvc *parse.Service, skillSvc *skillsvc.Service, localStorage *stor
 		maxMB = maxUploadMB[0]
 	}
 	return &Handler{
-		parseSvc:     parseSvc,
-		skillSvc:     skillSvc,
-		localStorage: localStorage,
-		maxUploadMB:  maxMB,
+		parseSvc:          parseSvc,
+		skillSvc:          skillSvc,
+		localStorage:      localStorage,
+		maxUploadMB:       maxMB,
+		botPublishTimeout: defaultBotPublishTimeout,
+	}
+}
+
+// SetBotPublishTimeout sets the synchronous bot-publish parse budget.
+func (h *Handler) SetBotPublishTimeout(timeout time.Duration) {
+	if timeout > 0 {
+		h.botPublishTimeout = timeout
 	}
 }
 
@@ -166,7 +175,11 @@ func (h *Handler) BotPublishSkill(c *gin.Context) {
 	}
 
 	tags := marshalPublishTags(req.Tags)
-	parseCtx, parseCancel := context.WithTimeout(c.Request.Context(), botPublishTimeout)
+	// Bot publish is intentionally detached from the HTTP request context:
+	// server write deadlines or client disconnects must not leave a parse task
+	// consumed while the follow-up skill creation is cancelled halfway through.
+	publishCtx := context.WithoutCancel(c.Request.Context())
+	parseCtx, parseCancel := context.WithTimeout(publishCtx, h.botPublishTimeout)
 	defer parseCancel()
 	result, err := h.parseSvc.ParseUploadSync(parseCtx, uploadID, identity.UID)
 	if err != nil {
@@ -178,7 +191,7 @@ func (h *Handler) BotPublishSkill(c *gin.Context) {
 			apiresponse.Fail(c, http.StatusConflict, errcode.Conflict, "upload cannot be published from its current parse status", nil, "")
 			return
 		}
-		if errors.Is(err, context.DeadlineExceeded) {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 			apiresponse.Fail(c, http.StatusGatewayTimeout, errcode.InternalError, "skill parse timed out", nil, "")
 			return
 		}
@@ -201,7 +214,7 @@ func (h *Handler) BotPublishSkill(c *gin.Context) {
 		return
 	}
 
-	item, err := h.skillSvc.Create(c.Request.Context(), skillsvc.CreateParams{
+	item, err := h.skillSvc.Create(publishCtx, skillsvc.CreateParams{
 		ParseTaskID: result.TaskID,
 		Name:        req.Name,
 		DisplayName: req.DisplayName,
