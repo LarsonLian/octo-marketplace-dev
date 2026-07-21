@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
+	categoryrepo "github.com/Mininglamp-OSS/octo-marketplace/internal/repository/category"
 	skillrepo "github.com/Mininglamp-OSS/octo-marketplace/internal/repository/skill"
 )
 
@@ -131,6 +133,80 @@ func TestRowToItemFields(t *testing.T) {
 	}
 	if item.CreatedAt != "2026-07-14T12:00:00Z" {
 		t.Errorf("CreatedAt = %q", item.CreatedAt)
+	}
+}
+
+func TestDeleteDeletesAllVersionArtifacts(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	store := &fakeStorage{}
+	svc := New(skillrepo.New(db), categoryrepo.New(db), store, func() string { return "id" })
+	now := time.Now()
+
+	currentStorage := `{"type":"s3","zip_object_key":"skills/user-skill/v2/skill.zip","skill_md_object_key":"skills/user-skill/v2/SKILL.md"}`
+	oldStorage := `{"type":"s3","zip_object_key":"skills/user-skill/v1/skill.zip","skill_md_object_key":"skills/user-skill/v1/SKILL.md"}`
+	legacyStorage := `{"type":"s3","object_key":"skills/user-skill/v0/legacy.zip"}`
+
+	mock.ExpectQuery("SELECT .+ FROM skills").
+		WithArgs("user-skill").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "name", "display_name", "icon_url", "source_skill_id", "current_version_id",
+			"description", "category_id", "tags",
+			"owner_id", "owner_name", "space_id", "visibility", "version",
+			"readme_content", "file_name", "file_url", "file_size", "file_sha256",
+			"created_at", "updated_at",
+			"resolved_version", "version_storage",
+			"view_count", "download_count",
+		}).AddRow(
+			"user-skill", "octo-style", "octo-style", "", "", "v2",
+			"desc", "cat1", []byte(`[]`),
+			"user-1", "User One", "space-1", "space", "2.0.0",
+			"", "skill.zip", "skills/user-skill/v2/skill.zip", int64(2048), "sha2",
+			now, now,
+			"2.0.0", currentStorage,
+			int64(0), int64(0),
+		))
+	mock.ExpectQuery("SELECT id, skill_id, version, changelog, storage, changed_by, created_at").
+		WithArgs("user-skill").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "skill_id", "version", "changelog", "storage", "changed_by", "created_at",
+		}).
+			AddRow("v2", "user-skill", "2.0.0", "", currentStorage, "user-1", now).
+			AddRow("v1", "user-skill", "1.0.0", "", oldStorage, "user-1", now.Add(-time.Hour)).
+			AddRow("v0", "user-skill", "0.9.0", "", legacyStorage, "user-1", now.Add(-2*time.Hour)))
+	mock.ExpectExec("UPDATE skills").
+		WithArgs("user-skill").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	if err := svc.Delete(context.Background(), "user-skill", "user-1", "space-1"); err != nil {
+		t.Fatalf("Delete error = %v", err)
+	}
+
+	want := map[string]bool{
+		"skills/user-skill/v2/skill.zip":  true,
+		"skills/user-skill/v2/SKILL.md":   true,
+		"skills/user-skill/v1/skill.zip":  true,
+		"skills/user-skill/v1/SKILL.md":   true,
+		"skills/user-skill/v0/legacy.zip": true,
+	}
+	if len(store.deleteKeys) != len(want) {
+		t.Fatalf("deleteKeys=%v, want %d keys", store.deleteKeys, len(want))
+	}
+	for _, key := range store.deleteKeys {
+		if !want[key] {
+			t.Fatalf("unexpected delete key %q in %v", key, store.deleteKeys)
+		}
+		delete(want, key)
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing delete keys: %v", want)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 

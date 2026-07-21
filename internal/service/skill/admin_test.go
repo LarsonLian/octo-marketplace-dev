@@ -96,6 +96,80 @@ func TestAdminGet_AcceptsPublic(t *testing.T) {
 	}
 }
 
+func TestAdminDeleteDeletesAllVersionArtifacts(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	store := &fakeStorage{}
+	svc := New(skillrepo.New(db), categoryrepo.New(db), store, func() string { return "id" })
+	now := time.Now()
+
+	currentStorage := `{"type":"s3","zip_object_key":"skills/admin-skill/v2/skill.zip","skill_md_object_key":"skills/admin-skill/v2/SKILL.md"}`
+	oldStorage := `{"type":"s3","zip_object_key":"skills/admin-skill/v1/skill.zip","skill_md_object_key":"skills/admin-skill/v1/SKILL.md"}`
+	legacyStorage := `{"type":"s3","object_key":"skills/admin-skill/v0/legacy.zip"}`
+
+	mock.ExpectQuery("SELECT .+ FROM skills").
+		WithArgs("admin-skill").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "name", "display_name", "icon_url", "source_skill_id", "current_version_id",
+			"description", "category_id", "tags",
+			"owner_id", "owner_name", "space_id", "visibility", "version",
+			"readme_content", "file_name", "file_url", "file_size", "file_sha256",
+			"created_at", "updated_at",
+			"resolved_version", "version_storage",
+			"view_count", "download_count",
+		}).AddRow(
+			"admin-skill", "octo-style", "octo-style", "", "", "v2",
+			"desc", "cat1", []byte(`[]`),
+			"owner-1", "Owner", "", "public", "2.0.0",
+			"", "skill.zip", "skills/admin-skill/v2/skill.zip", int64(2048), "sha2",
+			now, now,
+			"2.0.0", currentStorage,
+			int64(0), int64(0),
+		))
+	mock.ExpectQuery("SELECT id, skill_id, version, changelog, storage, changed_by, created_at").
+		WithArgs("admin-skill").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "skill_id", "version", "changelog", "storage", "changed_by", "created_at",
+		}).
+			AddRow("v2", "admin-skill", "2.0.0", "", currentStorage, "admin", now).
+			AddRow("v1", "admin-skill", "1.0.0", "", oldStorage, "admin", now.Add(-time.Hour)).
+			AddRow("v0", "admin-skill", "0.9.0", "", legacyStorage, "admin", now.Add(-2*time.Hour)))
+	mock.ExpectExec("UPDATE skills").
+		WithArgs("admin-skill").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	if err := svc.AdminDelete(context.Background(), "admin-skill"); err != nil {
+		t.Fatalf("AdminDelete error = %v", err)
+	}
+
+	want := map[string]bool{
+		"skills/admin-skill/v2/skill.zip":  true,
+		"skills/admin-skill/v2/SKILL.md":   true,
+		"skills/admin-skill/v1/skill.zip":  true,
+		"skills/admin-skill/v1/SKILL.md":   true,
+		"skills/admin-skill/v0/legacy.zip": true,
+	}
+	if len(store.deleteKeys) != len(want) {
+		t.Fatalf("deleteKeys=%v, want %d keys", store.deleteKeys, len(want))
+	}
+	for _, key := range store.deleteKeys {
+		if !want[key] {
+			t.Fatalf("unexpected delete key %q in %v", key, store.deleteKeys)
+		}
+		delete(want, key)
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing delete keys: %v", want)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestAdminReuploadNameMismatchDeletesTempObject(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

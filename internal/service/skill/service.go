@@ -689,12 +689,21 @@ func (s *Service) Delete(ctx context.Context, id, userID, spaceID string) error 
 	if row == nil || row.OwnerID != userID || row.SpaceID != spaceID {
 		return ErrNotFound
 	}
+	versions, err := s.repo.ListVersions(ctx, id)
+	if err != nil {
+		return err
+	}
+	objectKeys := collectDeleteObjectKeys(row.FileURL, append([]string{row.VersionStorage}, versionStorageStrings(versions)...)...)
+
 	affected, err := s.repo.Delete(ctx, id)
 	if err != nil {
 		return err
 	}
 	if affected == 0 {
 		return ErrNotFound
+	}
+	for _, key := range objectKeys {
+		_ = s.store.DeleteObject(ctx, key)
 	}
 	return nil
 }

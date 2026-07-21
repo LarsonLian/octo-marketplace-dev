@@ -320,6 +320,12 @@ func (s *Service) AdminDelete(ctx context.Context, id string) error {
 		return ErrNotFound
 	}
 
+	versions, err := s.repo.ListVersions(ctx, id)
+	if err != nil {
+		return err
+	}
+	objectKeys := collectDeleteObjectKeys(row.FileURL, append([]string{row.VersionStorage}, versionStorageStrings(versions)...)...)
+
 	affected, err := s.repo.Delete(ctx, id)
 	if err != nil {
 		return err
@@ -327,8 +333,53 @@ func (s *Service) AdminDelete(ctx context.Context, id string) error {
 	if affected == 0 {
 		return ErrNotFound
 	}
+	for _, key := range objectKeys {
+		_ = s.store.DeleteObject(ctx, key)
+	}
 
 	return nil
+}
+
+func versionStorageStrings(versions []skillrepo.VersionRow) []string {
+	storages := make([]string, 0, len(versions))
+	for _, version := range versions {
+		storages = append(storages, version.Storage)
+	}
+	return storages
+}
+
+func collectDeleteObjectKeys(fileURL string, storages ...string) []string {
+	seen := make(map[string]struct{})
+	var keys []string
+	add := func(key string) {
+		if key == "" {
+			return
+		}
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		keys = append(keys, key)
+	}
+
+	add(fileURL)
+	for _, raw := range storages {
+		if raw == "" {
+			continue
+		}
+		var vs model.VersionStorage
+		if json.Unmarshal([]byte(raw), &vs) == nil {
+			add(vs.ZipObjectKey)
+			add(vs.SkillMdObjectKey)
+		}
+		var legacy struct {
+			ObjectKey string `json:"object_key"`
+		}
+		if json.Unmarshal([]byte(raw), &legacy) == nil {
+			add(legacy.ObjectKey)
+		}
+	}
+	return keys
 }
 
 // AdminGetSkillMD retrieves the SKILL.md content for a public skill.
