@@ -159,14 +159,15 @@ func (s *Service) List(ctx context.Context, p ListParams) (*ListResult, error) {
 // to preserve backward-compatible cursor pagination on the /skills/mine endpoint.
 func (s *Service) ListMine(ctx context.Context, p ListParams) (*ListResult, error) {
 	repoResult, err := s.repo.List(ctx, skillrepo.ListFilter{
-		SpaceID:  p.SpaceID,
-		UserID:   p.UserID,
-		Query:    p.Query,
-		Tags:     normalizeTags(p.Tags),
-		Cursor:   p.Cursor,
-		Limit:    p.Limit,
-		Sort:     skillrepo.SortLatest,
-		MineOnly: true,
+		SpaceID:   p.SpaceID,
+		UserID:    p.UserID,
+		Query:     p.Query,
+		Tags:      normalizeTags(p.Tags),
+		Cursor:    p.Cursor,
+		Limit:     p.Limit,
+		Sort:      skillrepo.SortLatest,
+		MineOnly:  true,
+		UseCursor: true,
 	})
 	if err != nil {
 		return nil, err

@@ -69,7 +69,7 @@ var validSortModes = map[string]bool{
 
 // List godoc
 // @Summary List skills
-// @Description List skills visible in the current Space with sort and pagination.
+// @Description List skills visible in the current Space with offset pagination.
 // @Tags skill
 // @ID skill.list
 // @Accept json
@@ -80,10 +80,9 @@ var validSortModes = map[string]bool{
 // @Param tags query string false "Comma-separated tag names; all tags must match"
 // @Param tag query []string false "Repeated tag names; all tags must match"
 // @Param sort query string false "Sort mode: comprehensive (default), latest, downloads, views"
-// @Param cursor query string false "Cursor for next page (latest sort only)"
-// @Param offset query int false "Offset for pagination (comprehensive/downloads/views)"
+// @Param page query int false "Page number, default 1"
 // @Param page_size query int false "Page size, default 20, max 50"
-// @Success 200 {object} apiresponse.CursorList[SkillResponse]
+// @Success 200 {object} apiresponse.OffsetList[SkillResponse]
 // @Failure 400 {object} apiresponse.Error "VALIDATION_ERROR"
 // @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
 // @Failure 403 {object} apiresponse.Error "FORBIDDEN"
@@ -108,7 +107,14 @@ func (h *Handler) List(c *gin.Context) {
 		return
 	}
 
-	offset := parseOffset(c.Query("offset"))
+	page := parsePage(c.Query("page"))
+	offset := (page - 1) * limit
+	if rawOffset := c.Query("offset"); rawOffset != "" {
+		offset = parseOffset(rawOffset)
+		if limit > 0 {
+			page = offset/limit + 1
+		}
+	}
 
 	result, err := h.svc.List(c.Request.Context(), skillsvc.ListParams{
 		SpaceID:    spaceID,
@@ -126,18 +132,7 @@ func (h *Handler) List(c *gin.Context) {
 		return
 	}
 
-	if sort == skillrepo.SortLatest {
-		// Cursor-based pagination for latest sort
-		nextCursor := cursorValue(result.NextCursor)
-		apiresponse.Cursor(c, result.Items, nextCursor != "", nextCursor)
-	} else {
-		// Offset-based pagination for comprehensive/downloads/views
-		page := 1
-		if limit > 0 {
-			page = offset/limit + 1
-		}
-		apiresponse.Offset(c, result.Items, result.Total, page, limit)
-	}
+	apiresponse.Offset(c, result.Items, result.Total, page, limit)
 }
 
 // ListMine godoc

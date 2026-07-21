@@ -137,7 +137,7 @@ func TestAdminReuploadDuplicateVersionDoesNotDeletePublishedObjects(t *testing.T
 				"admin", "", "admin-dup"))
 	mock.ExpectBegin()
 	mock.ExpectExec("UPDATE parse_tasks SET status").
-		WithArgs("admin-task-dup").
+		WithArgs("admin-task-dup", "admin-dup").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("UPDATE skills SET").
 		WillReturnResult(sqlmock.NewResult(0, 1))

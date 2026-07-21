@@ -384,6 +384,9 @@ func (s *Service) AdminReupload(ctx context.Context, id string, p AdminReuploadP
 	if pt == nil || pt.Status != "success" {
 		return nil, ErrInvalidParseTask
 	}
+	if pt.SkillID != "" && pt.SkillID != id {
+		return nil, ErrInvalidParseTask
+	}
 	// Validate zip embedded id matches current skill id
 	if pt.ResultID != "" && pt.ResultID != id {
 		return nil, ErrIDMismatch
@@ -512,7 +515,7 @@ func (s *Service) AdminReupload(ctx context.Context, id string, p AdminReuploadP
 	repoParams.CurrentVersionID = &versionID
 
 	// Transactionally: consume parse task, update skill, and insert version
-	err = s.repo.AdminUpdateSkillAndConsumeTask(ctx, id, row.OwnerID, repoParams, p.ParseTaskID, &model.SkillVersion{
+	err = s.repo.AdminUpdateSkillAndConsumeTask(ctx, id, row.OwnerID, repoParams, p.ParseTaskID, id, &model.SkillVersion{
 		ID:        versionID,
 		SkillID:   id,
 		Version:   version,

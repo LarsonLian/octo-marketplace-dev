@@ -313,7 +313,7 @@ func TestFlushWorker_LockRelease_AfterContextCancel(t *testing.T) {
 	rdb := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
 	cfg := DefaultFlushWorkerConfig()
 	cfg.Batch = 500
-	w := NewFlushWorker(rdb, &cancelOnCall.mockRepo, cfg)
+	w := NewFlushWorker(rdb, cancelOnCall, cfg)
 
 	// Set up dirty items
 	mr.Set("metrics:skill:sk-1:view", "5")
@@ -331,6 +331,19 @@ func TestFlushWorker_LockRelease_AfterContextCancel(t *testing.T) {
 	ok := mr.Exists(flushLockKey)
 	if ok {
 		t.Error("expected lock to be released after context cancellation during flush")
+	}
+
+	members, _ := mr.Members("metrics:dirty")
+	if len(members) != 1 {
+		t.Fatalf("expected exactly one unprocessed dirty member requeued, got %v", members)
+	}
+	requeuedID := strings.TrimPrefix(members[0], "skill:")
+	viewVal, err := mr.Get("metrics:skill:" + requeuedID + ":view")
+	if err != nil {
+		t.Fatalf("expected requeued member counter to remain in Redis: %v", err)
+	}
+	if viewVal == "0" {
+		t.Fatalf("requeued member %q counter was reset before processing", members[0])
 	}
 }
 
