@@ -12,13 +12,13 @@ func expectResolveOrCreateTagIDs(mock sqlmock.Sqlmock, spaceID, createdBy string
 	for i, tag := range tags {
 		id := ids[i]
 		mock.ExpectQuery("SELECT id").
-			WithArgs(tag, skillrepo.GlobalTagSpaceID, spaceID, skillrepo.GlobalTagSpaceID).
+			WithArgs(tag, skillrepo.GlobalTagSpaceID, spaceID, spaceID).
 			WillReturnError(sql.ErrNoRows)
 		mock.ExpectExec("INSERT INTO skill_tags").
 			WithArgs(spaceID, tag, createdBy).
 			WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectQuery("SELECT id").
-			WithArgs(tag, skillrepo.GlobalTagSpaceID, spaceID, skillrepo.GlobalTagSpaceID).
+			WithArgs(tag, skillrepo.GlobalTagSpaceID, spaceID, spaceID).
 			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(id))
 	}
 }

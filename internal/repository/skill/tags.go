@@ -26,7 +26,7 @@ type TagRow struct {
 
 // ListTags returns tags visible to all members of the current Space, including
 // administrator-created global tags. When both scopes contain the same tag
-// name, the global row wins so its metadata is returned.
+// name, the Space-local row wins so its metadata is returned.
 func (r *Repo) ListTags(ctx context.Context, spaceID, query string, limit int) ([]TagRow, error) {
 	if limit <= 0 {
 		limit = 50
@@ -58,7 +58,7 @@ func (r *Repo) ListTags(ctx context.Context, spaceID, query string, limit int) (
 		WHERE ranked.rn = 1
 		ORDER BY ranked.updated_at DESC, ranked.name ASC
 		LIMIT ?
-	`, append([]interface{}{GlobalTagSpaceID}, args...)...)
+	`, append([]interface{}{spaceID}, args...)...)
 	if err != nil {
 		return nil, fmt.Errorf("list tags: %w", err)
 	}
@@ -112,7 +112,7 @@ func resolveTagID(ctx context.Context, ex tagExec, spaceID, tag string) (int64, 
 		WHERE name = ? AND space_id IN (?, ?)
 		ORDER BY CASE WHEN space_id = ? THEN 0 ELSE 1 END
 		LIMIT 1
-	`, tag, GlobalTagSpaceID, spaceID, GlobalTagSpaceID).Scan(&id)
+	`, tag, GlobalTagSpaceID, spaceID, spaceID).Scan(&id)
 	if err == sql.ErrNoRows {
 		return 0, nil
 	}
@@ -156,7 +156,7 @@ func (r *Repo) ResolveFilterTagIDs(ctx context.Context, spaceID string, tags []s
 			conditions += " AND space_id IN (?, ?)"
 			args = append(args, GlobalTagSpaceID, spaceID)
 		}
-		args = append(args, GlobalTagSpaceID)
+		args = append(args, spaceID)
 		rows, err := r.db.QueryContext(ctx, `
 			SELECT id
 			FROM skill_tags

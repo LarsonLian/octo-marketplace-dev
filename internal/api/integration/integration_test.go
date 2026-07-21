@@ -541,7 +541,7 @@ func TestListSkillTags(t *testing.T) {
 
 	now := time.Now().UTC()
 	mock.ExpectQuery("SELECT ranked\\.id, ranked\\.space_id, ranked\\.name").
-		WithArgs("", "space-1", "", "%auto%", 10).
+		WithArgs("space-1", "space-1", "", "%auto%", 10).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "space_id", "name", "created_by", "created_at", "updated_at"}).
 			AddRow(int64(1), "space-1", "automation", "user-2", now, now).
 			AddRow(int64(2), "", "auto-global", "admin", now, now))

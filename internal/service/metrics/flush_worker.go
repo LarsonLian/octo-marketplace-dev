@@ -51,12 +51,33 @@ type FlushWorker struct {
 
 // NewFlushWorker creates a new FlushWorker.
 func NewFlushWorker(rdb *goredis.Client, repo MetricsRepository, cfg FlushWorkerConfig) *FlushWorker {
+	cfg = withFlushWorkerDefaults(cfg)
 	return &FlushWorker{
 		rdb:        rdb,
 		repo:       repo,
 		cfg:        cfg,
 		instanceID: generateInstanceID(),
 	}
+}
+
+func withFlushWorkerDefaults(cfg FlushWorkerConfig) FlushWorkerConfig {
+	defaults := DefaultFlushWorkerConfig()
+	if cfg.Interval <= 0 {
+		cfg.Interval = defaults.Interval
+	}
+	if cfg.Batch <= 0 {
+		cfg.Batch = defaults.Batch
+	}
+	if cfg.LockTTL <= 0 {
+		cfg.LockTTL = defaults.LockTTL
+	}
+	if cfg.FlushLedgerRetention <= 0 {
+		cfg.FlushLedgerRetention = defaults.FlushLedgerRetention
+	}
+	if cfg.FlushLedgerCleanupGap <= 0 {
+		cfg.FlushLedgerCleanupGap = defaults.FlushLedgerCleanupGap
+	}
+	return cfg
 }
 
 // Start begins the flush loop. It blocks until ctx is cancelled.

@@ -63,6 +63,26 @@ func setupTestWorker(t *testing.T, repo MetricsRepository) (*FlushWorker, *minir
 	return w, mr
 }
 
+func TestNewFlushWorkerAppliesDefaultsForPartialConfig(t *testing.T) {
+	w := NewFlushWorker(nil, &mockRepo{}, FlushWorkerConfig{Batch: 42})
+	defaults := DefaultFlushWorkerConfig()
+	if w.cfg.Batch != 42 {
+		t.Fatalf("Batch=%d want 42", w.cfg.Batch)
+	}
+	if w.cfg.Interval != defaults.Interval {
+		t.Fatalf("Interval=%s want %s", w.cfg.Interval, defaults.Interval)
+	}
+	if w.cfg.LockTTL != defaults.LockTTL {
+		t.Fatalf("LockTTL=%s want %s", w.cfg.LockTTL, defaults.LockTTL)
+	}
+	if w.cfg.FlushLedgerRetention != defaults.FlushLedgerRetention {
+		t.Fatalf("FlushLedgerRetention=%s want %s", w.cfg.FlushLedgerRetention, defaults.FlushLedgerRetention)
+	}
+	if w.cfg.FlushLedgerCleanupGap != defaults.FlushLedgerCleanupGap {
+		t.Fatalf("FlushLedgerCleanupGap=%s want %s", w.cfg.FlushLedgerCleanupGap, defaults.FlushLedgerCleanupGap)
+	}
+}
+
 func TestParseDirtyKey_Normal(t *testing.T) {
 	cases := []struct {
 		input     string

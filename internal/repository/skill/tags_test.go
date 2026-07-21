@@ -19,7 +19,7 @@ func TestListTagsScopesToSpaceAndFuzzyQuery(t *testing.T) {
 
 	now := time.Now().UTC()
 	mock.ExpectQuery("SELECT ranked\\.id, ranked\\.space_id, ranked\\.name").
-		WithArgs(GlobalTagSpaceID, "space-1", GlobalTagSpaceID, "%auto%", 25).
+		WithArgs("space-1", "space-1", GlobalTagSpaceID, "%auto%", 25).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "space_id", "name", "created_by", "created_at", "updated_at"}).
 			AddRow(int64(1), "space-1", "automation", "user-1", now, now))
 
@@ -44,7 +44,7 @@ func TestListTagsIncludesGlobalTags(t *testing.T) {
 
 	now := time.Now().UTC()
 	mock.ExpectQuery("ROW_NUMBER\\(\\) OVER").
-		WithArgs(GlobalTagSpaceID, "space-1", GlobalTagSpaceID, 50).
+		WithArgs("space-1", "space-1", GlobalTagSpaceID, 50).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "space_id", "name", "created_by", "created_at", "updated_at"}).
 			AddRow(int64(1), GlobalTagSpaceID, "official", "admin", now, now).
 			AddRow(int64(2), "space-1", "team", "user-1", now, now))
@@ -64,7 +64,7 @@ func TestListTagsIncludesGlobalTags(t *testing.T) {
 	}
 }
 
-func TestListTagsDeduplicatesByNameWithGlobalFirst(t *testing.T) {
+func TestListTagsDeduplicatesByNameWithSpaceLocalFirst(t *testing.T) {
 	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
 	if err != nil {
 		t.Fatal(err)
@@ -73,9 +73,9 @@ func TestListTagsDeduplicatesByNameWithGlobalFirst(t *testing.T) {
 
 	now := time.Now().UTC()
 	mock.ExpectQuery("PARTITION BY name.*CASE WHEN space_id = \\? THEN 0 ELSE 1 END").
-		WithArgs(GlobalTagSpaceID, "space-1", GlobalTagSpaceID, 50).
+		WithArgs("space-1", "space-1", GlobalTagSpaceID, 50).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "space_id", "name", "created_by", "created_at", "updated_at"}).
-			AddRow(int64(10), GlobalTagSpaceID, "AI", "admin", now, now))
+			AddRow(int64(11), "space-1", "AI", "user-1", now, now))
 
 	rows, err := New(db).ListTags(context.Background(), "space-1", "", 50)
 	if err != nil {
@@ -84,8 +84,31 @@ func TestListTagsDeduplicatesByNameWithGlobalFirst(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("rows = %#v", rows)
 	}
-	if rows[0].ID != 10 || rows[0].SpaceID != GlobalTagSpaceID || rows[0].Name != "AI" {
-		t.Fatalf("global tag should win for duplicate names, got %#v", rows[0])
+	if rows[0].ID != 11 || rows[0].SpaceID != "space-1" || rows[0].Name != "AI" {
+		t.Fatalf("space-local tag should win for duplicate names, got %#v", rows[0])
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestResolveOrCreateTagIDsPrefersSpaceLocalCollision(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery("SELECT id").
+		WithArgs("AI", GlobalTagSpaceID, "space-1", "space-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(22)))
+
+	ids, err := resolveOrCreateTagIDs(context.Background(), db, "space-1", "user-1", []string{"AI"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 1 || ids[0] != 22 {
+		t.Fatalf("ids = %#v, want local tag id 22", ids)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

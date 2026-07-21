@@ -135,11 +135,10 @@ func main() {
 				}
 			}()
 			mRepo := metricsrepo.New(database)
-			flushCfg := metricssvc.FlushWorkerConfig{
-				Interval: cfg.MetricsFlushInterval,
-				Batch:    int64(cfg.MetricsFlushBatch),
-				LockTTL:  cfg.MetricsFlushLockTTL,
-			}
+			flushCfg := metricssvc.DefaultFlushWorkerConfig()
+			flushCfg.Interval = cfg.MetricsFlushInterval
+			flushCfg.Batch = int64(cfg.MetricsFlushBatch)
+			flushCfg.LockTTL = cfg.MetricsFlushLockTTL
 			fw := metricssvc.NewFlushWorker(metricsRDB, mRepo, flushCfg)
 			go fw.Start(flushCtx)
 			log.Printf("[flush-worker] enabled (interval=%s)", cfg.MetricsFlushInterval)
