@@ -350,6 +350,11 @@ func TestDeleteSkillOwner(t *testing.T) {
 
 	mock.ExpectQuery("SELECT .+ FROM skills").
 		WillReturnRows(skillRow("skill-6", "My Skill", "user-1", "Alice", "space-1", "space"))
+	mock.ExpectQuery("SELECT id, skill_id, version, changelog, storage, changed_by, created_at").
+		WithArgs("skill-6").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "skill_id", "version", "changelog", "storage", "changed_by", "created_at",
+		}))
 	mock.ExpectBegin()
 	mock.ExpectExec("DELETE FROM skill_versions").
 		WithArgs("skill-6").

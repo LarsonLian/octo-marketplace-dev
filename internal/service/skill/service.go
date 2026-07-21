@@ -683,8 +683,20 @@ func (s *Service) Delete(ctx context.Context, id, userID, spaceID string) error 
 	if row == nil || row.OwnerID != userID || row.SpaceID != spaceID {
 		return ErrNotFound
 	}
+	versions, err := s.repo.ListVersions(ctx, id)
+	if err != nil {
+		return err
+	}
+	objectKeys := collectDeleteObjectKeys(row.FileURL, append([]string{row.VersionStorage}, versionStorageStrings(versions)...)...)
+
 	_, err = s.repo.Delete(ctx, id)
-	return err
+	if err != nil {
+		return err
+	}
+	for _, key := range objectKeys {
+		_ = s.store.DeleteObject(ctx, key)
+	}
+	return nil
 }
 
 func toVisibility(v string) model.Visibility {
