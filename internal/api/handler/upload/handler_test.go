@@ -212,33 +212,6 @@ func TestBotIdentityDevFallback(t *testing.T) {
 	}
 }
 
-func TestNormalizePublishTags(t *testing.T) {
-	tests := []struct {
-		name  string
-		input json.RawMessage
-		want  string
-	}{
-		{name: "empty", input: nil, want: ""},
-		{name: "json array", input: json.RawMessage(`["bot","publish"]`), want: `["bot","publish"]`},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := normalizePublishTags(tt.input)
-			if err != nil {
-				t.Fatalf("normalizePublishTags() error = %v", err)
-			}
-			if string(got) != tt.want {
-				t.Fatalf("normalizePublishTags() = %s, want %s", string(got), tt.want)
-			}
-		})
-	}
-
-	if _, err := normalizePublishTags(json.RawMessage(`["ok", 1]`)); err == nil {
-		t.Fatal("expected invalid JSON array to fail")
-	}
-}
-
 func TestUploadIDFromLink(t *testing.T) {
 	tests := []struct {
 		name string

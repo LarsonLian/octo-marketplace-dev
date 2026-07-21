@@ -5,6 +5,32 @@ import (
 	"strings"
 )
 
+func rawTagsToStrings(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return []string{}
+	}
+	var tags []string
+	if err := json.Unmarshal(raw, &tags); err != nil {
+		return []string{}
+	}
+	return normalizeTags(tags)
+}
+
+func tagsToRaw(tags []string) (json.RawMessage, error) {
+	if tags == nil {
+		return nil, nil
+	}
+	normalized := normalizeTags(tags)
+	if normalized == nil {
+		normalized = []string{}
+	}
+	out, err := json.Marshal(normalized)
+	if err != nil {
+		return nil, err
+	}
+	return json.RawMessage(out), nil
+}
+
 func normalizeRawTags(raw json.RawMessage) (json.RawMessage, []string, error) {
 	if raw == nil {
 		return nil, nil, nil

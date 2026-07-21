@@ -121,8 +121,9 @@ func (w *FlushWorker) flush(ctx context.Context) {
 			break
 		}
 
-		for _, member := range members {
+		for i, member := range members {
 			if ctx.Err() != nil {
+				failedMembers = append(failedMembers, members[i:]...)
 				break
 			}
 			w.processMember(ctx, member, &totalProcessed, &totalDBFails, &failedMembers)

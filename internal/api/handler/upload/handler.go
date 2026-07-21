@@ -1,11 +1,13 @@
 package upload
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Mininglamp-OSS/octo-marketplace/internal/api/errcode"
 	apiresponse "github.com/Mininglamp-OSS/octo-marketplace/internal/api/response"
@@ -18,14 +20,17 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const defaultBotPublishTimeout = 2 * time.Minute
+
 // Handler handles HTTP requests for upload, parse, and download.
 type Handler struct {
-	parseSvc     *parse.Service
-	skillSvc     *skillsvc.Service
-	metricsSvc   *metricssvc.Service
-	localStorage *storage.LocalStorage // nil when not using local storage
-	maxUploadMB  int
-	devBotMode   bool
+	parseSvc          *parse.Service
+	skillSvc          *skillsvc.Service
+	metricsSvc        *metricssvc.Service
+	localStorage      *storage.LocalStorage // nil when not using local storage
+	maxUploadMB       int
+	devBotMode        bool
+	botPublishTimeout time.Duration
 }
 
 // New creates an upload handler.
@@ -35,10 +40,18 @@ func New(parseSvc *parse.Service, skillSvc *skillsvc.Service, localStorage *stor
 		maxMB = maxUploadMB[0]
 	}
 	return &Handler{
-		parseSvc:     parseSvc,
-		skillSvc:     skillSvc,
-		localStorage: localStorage,
-		maxUploadMB:  maxMB,
+		parseSvc:          parseSvc,
+		skillSvc:          skillSvc,
+		localStorage:      localStorage,
+		maxUploadMB:       maxMB,
+		botPublishTimeout: defaultBotPublishTimeout,
+	}
+}
+
+// SetBotPublishTimeout sets the synchronous bot-publish parse budget.
+func (h *Handler) SetBotPublishTimeout(timeout time.Duration) {
+	if timeout > 0 {
+		h.botPublishTimeout = timeout
 	}
 }
 
@@ -100,8 +113,24 @@ func (h *Handler) RegisterLocalProxy(r *gin.Engine, authEnabled ...bool) {
 	r.GET("/api/v1/_storage/download/*key", localProxyLoopbackOnly, h.localDownloadProxy)
 }
 
-// BotPublishSkill handles Bot one-step Skill publishing:
-// presigned upload -> synchronous parse -> create Skill.
+// BotPublishSkill godoc
+// @Summary Publish Skill as bot
+// @Description Parse an uploaded Skill archive synchronously through the bounded worker pool, then create a Skill owned by the bot owner.
+// @Tags skill_upload
+// @ID bot_skill.publish
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param body body BotPublishSkillRequest true "Bot publish request"
+// @Success 201 {object} apiresponse.Data[skillsvc.SkillItem]
+// @Failure 400 {object} apiresponse.Error "VALIDATION_ERROR"
+// @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
+// @Failure 404 {object} apiresponse.Error "NOT_FOUND"
+// @Failure 409 {object} apiresponse.Error "CONFLICT"
+// @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
+// @Failure 504 {object} apiresponse.Error "INTERNAL_ERROR"
+// @Router /bot/skills/publish [post]
 func (h *Handler) BotPublishSkill(c *gin.Context) {
 	if h.parseSvc == nil || h.skillSvc == nil {
 		apiresponse.Fail(c, http.StatusServiceUnavailable, errcode.InternalError, "skill publishing is unavailable", nil, "")
@@ -145,12 +174,14 @@ func (h *Handler) BotPublishSkill(c *gin.Context) {
 		return
 	}
 
-	tags, err := normalizePublishTags(req.Tags)
-	if err != nil {
-		apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "tags must be a JSON string array", nil, "")
-		return
-	}
-	result, err := h.parseSvc.ParseUploadSync(c.Request.Context(), uploadID, identity.UID)
+	tags := marshalPublishTags(req.Tags)
+	// Bot publish is intentionally detached from the HTTP request context:
+	// server write deadlines or client disconnects must not leave a parse task
+	// consumed while the follow-up skill creation is cancelled halfway through.
+	publishCtx := context.WithoutCancel(c.Request.Context())
+	parseCtx, parseCancel := context.WithTimeout(publishCtx, h.botPublishTimeout)
+	defer parseCancel()
+	result, err := h.parseSvc.ParseUploadSync(parseCtx, uploadID, identity.UID)
 	if err != nil {
 		if errors.Is(err, parse.ErrTaskNotFound) || errors.Is(err, parse.ErrForbidden) {
 			apiresponse.Fail(c, http.StatusNotFound, errcode.NotFound, "upload not found", nil, "")
@@ -158,6 +189,14 @@ func (h *Handler) BotPublishSkill(c *gin.Context) {
 		}
 		if errors.Is(err, parse.ErrTaskNotPending) {
 			apiresponse.Fail(c, http.StatusConflict, errcode.Conflict, "upload cannot be published from its current parse status", nil, "")
+			return
+		}
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			apiresponse.Fail(c, http.StatusGatewayTimeout, errcode.InternalError, "skill parse timed out", nil, "")
+			return
+		}
+		if errors.Is(err, parse.ErrParseIncomplete) {
+			apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "解析任务执行失败，请稍后重试", map[string]any{"parse_error_code": "INTERNAL_ERROR"}, "")
 			return
 		}
 		log.Printf("[BotPublishSkill] parse upload failed: %v", err)
@@ -175,7 +214,7 @@ func (h *Handler) BotPublishSkill(c *gin.Context) {
 		return
 	}
 
-	item, err := h.skillSvc.Create(c.Request.Context(), skillsvc.CreateParams{
+	item, err := h.skillSvc.Create(publishCtx, skillsvc.CreateParams{
 		ParseTaskID: result.TaskID,
 		Name:        req.Name,
 		DisplayName: req.DisplayName,
@@ -222,19 +261,19 @@ func (h *Handler) BotPublishSkill(c *gin.Context) {
 }
 
 type BotPublishSkillRequest struct {
-	SkillUploadID string          `json:"skill_upload_id"`
-	UploadURL     string          `json:"upload_url"`
-	PresignedURL  string          `json:"presigned_url"`
-	PublishMode   string          `json:"publish_mode"`
-	Name          string          `json:"name"`
-	DisplayName   string          `json:"display_name"`
-	IconURL       string          `json:"icon_url"`
-	Description   string          `json:"description"`
-	CategoryID    string          `json:"category_id"`
-	Tags          json.RawMessage `json:"tags"`
-	Visibility    string          `json:"visibility"`
-	Version       string          `json:"version"`
-	Changelog     string          `json:"changelog"`
+	SkillUploadID string   `json:"skill_upload_id"`
+	UploadURL     string   `json:"upload_url"`
+	PresignedURL  string   `json:"presigned_url"`
+	PublishMode   string   `json:"publish_mode"`
+	Name          string   `json:"name"`
+	DisplayName   string   `json:"display_name"`
+	IconURL       string   `json:"icon_url"`
+	Description   string   `json:"description"`
+	CategoryID    string   `json:"category_id"`
+	Tags          []string `json:"tags"`
+	Visibility    string   `json:"visibility"`
+	Version       string   `json:"version"`
+	Changelog     string   `json:"changelog"`
 }
 
 func (h *Handler) botIdentity(c *gin.Context, identity model.Identity) (model.BotIdentity, bool) {
@@ -272,16 +311,12 @@ func requestToken(c *gin.Context) string {
 	return ""
 }
 
-func normalizePublishTags(input json.RawMessage) (json.RawMessage, error) {
-	if len(input) == 0 {
-		return nil, nil
-	}
-	var tags []string
-	if err := json.Unmarshal(input, &tags); err != nil {
-		return nil, err
+func marshalPublishTags(tags []string) json.RawMessage {
+	if tags == nil {
+		return nil
 	}
 	out, _ := json.Marshal(tags)
-	return out, nil
+	return out
 }
 
 func uploadIDFromLink(link string) string {
@@ -307,7 +342,7 @@ func uploadIDFromLink(link string) string {
 // initRequest is the JSON body for POST /api/v1/skill/upload/init.
 type InitUploadRequest struct {
 	FileName string `json:"file_name" binding:"required"`
-	FileSize int64  `json:"file_size" binding:"required"`
+	FileSize int64  `json:"file_size" binding:"required,gt=0"`
 }
 
 // InitUpload godoc
@@ -344,7 +379,11 @@ func (h *Handler) InitUpload(c *gin.Context) {
 	result, err := h.parseSvc.InitUpload(c.Request.Context(), req.FileName, req.FileSize, identity.UID, spaceID)
 	if err != nil {
 		if errors.Is(err, parse.ErrInvalidFileName) {
-			apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "file_name must end with .zip", nil, "")
+			apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "file_name must end with .zip or .skill", nil, "")
+			return
+		}
+		if errors.Is(err, parse.ErrInvalidFileSize) {
+			apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "file_size must be positive", nil, "")
 			return
 		}
 		if errors.Is(err, parse.ErrFileTooLarge) {
@@ -373,6 +412,7 @@ func (h *Handler) InitUpload(c *gin.Context) {
 // @Failure 403 {object} apiresponse.Error "FORBIDDEN"
 // @Failure 404 {object} apiresponse.Error "NOT_FOUND"
 // @Failure 409 {object} apiresponse.Error "CONFLICT"
+// @Failure 429 {object} apiresponse.Error "RATE_LIMITED"
 // @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
 // @Router /skill_uploads/{skill_upload_id}/parse [post]
 func (h *Handler) TriggerParse(c *gin.Context) {
@@ -395,6 +435,10 @@ func (h *Handler) TriggerParse(c *gin.Context) {
 		}
 		if errors.Is(err, parse.ErrTaskNotPending) {
 			apiresponse.Fail(c, http.StatusConflict, errcode.Conflict, "parse already triggered", nil, "")
+			return
+		}
+		if errors.Is(err, parse.ErrParseQueueFull) {
+			apiresponse.Fail(c, http.StatusTooManyRequests, errcode.RateLimited, "parse queue is busy, retry later", nil, "")
 			return
 		}
 		log.Printf("[TriggerParse] internal error for uploadID=%s: %v", uploadID, err)
@@ -444,7 +488,7 @@ func (h *Handler) PollParse(c *gin.Context) {
 // iconUploadRequest is the JSON body for POST /api/v1/skill/upload/icon.
 type IconUploadRequest struct {
 	FileName string `json:"file_name" binding:"required"`
-	FileSize int64  `json:"file_size" binding:"required"`
+	FileSize int64  `json:"file_size" binding:"required,gt=0"`
 }
 
 // InitIconUpload godoc
@@ -479,6 +523,10 @@ func (h *Handler) InitIconUpload(c *gin.Context) {
 
 	result, err := h.parseSvc.InitIconUpload(c.Request.Context(), req.FileName, req.FileSize, identity.UID)
 	if err != nil {
+		if errors.Is(err, parse.ErrInvalidFileSize) {
+			apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "file_size must be positive", nil, "")
+			return
+		}
 		if errors.Is(err, parse.ErrFileTooLarge) {
 			apiresponse.Fail(c, http.StatusRequestEntityTooLarge, errcode.FileTooLarge, "icon exceeds 2MB limit", nil, "")
 			return
@@ -493,7 +541,7 @@ func (h *Handler) InitIconUpload(c *gin.Context) {
 // reuploadRequest is the JSON body for POST /api/v1/skill/:id/reupload/init.
 type ReuploadRequest struct {
 	FileName string `json:"file_name" binding:"required"`
-	FileSize int64  `json:"file_size" binding:"required"`
+	FileSize int64  `json:"file_size" binding:"required,gt=0"`
 }
 
 // InitReupload godoc
@@ -547,7 +595,11 @@ func (h *Handler) InitReupload(c *gin.Context) {
 	result, err := h.parseSvc.InitReupload(c.Request.Context(), skillID, req.FileName, req.FileSize, identity.UID, spaceID)
 	if err != nil {
 		if errors.Is(err, parse.ErrInvalidFileName) {
-			apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "file_name must end with .zip", nil, "")
+			apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "file_name must end with .zip or .skill", nil, "")
+			return
+		}
+		if errors.Is(err, parse.ErrInvalidFileSize) {
+			apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "file_size must be positive", nil, "")
 			return
 		}
 		if errors.Is(err, parse.ErrFileTooLarge) {
@@ -622,7 +674,23 @@ func (h *Handler) Download(c *gin.Context) {
 	c.Redirect(http.StatusFound, info.DownloadURL)
 }
 
-// AdminDownload returns a presigned download URL for a public skill (admin-only).
+// AdminDownload godoc
+// @Summary Download public Skill archive (admin)
+// @Description Return a presigned artifact URL for a public Skill, or redirect to it unless format=json is requested.
+// @Tags admin_skill
+// @ID admin_skill.download
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param skill_id path string true "Skill ID"
+// @Param format query string false "Use json to return the download URL"
+// @Success 200 {object} apiresponse.Data[DownloadResponse]
+// @Success 302 "Redirect to artifact"
+// @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
+// @Failure 404 {object} apiresponse.Error "NOT_FOUND"
+// @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
+// @Router /admin/skills/{skill_id}/download [get]
 func (h *Handler) AdminDownload(c *gin.Context) {
 	if _, ok := middleware.Identity(c); !ok {
 		apiresponse.Fail(c, http.StatusUnauthorized, errcode.Unauthorized, "authentication is required", nil, "")

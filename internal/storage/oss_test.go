@@ -160,6 +160,22 @@ func TestMinIOPublicDownloadUsesPathStyleBucketURL(t *testing.T) {
 	}
 }
 
+func TestPublicObjectURLEscapesPathStyleSegments(t *testing.T) {
+	s := &OSSStorage{
+		bucket:          "octo marketplace",
+		keyPrefix:       "prefix with space",
+		publicEndpoint:  "https://cdn.example.com/base path",
+		publicPathStyle: true,
+	}
+	raw, err := s.PublicURL(context.Background(), "skills/demo #1.zip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(raw, "/base%20path/octo%20marketplace/prefix%20with%20space/skills/demo%20%231.zip") {
+		t.Fatalf("public URL did not escape path segments: %s", raw)
+	}
+}
+
 func TestPublicPresignedURLRewritesOnlyOrigin(t *testing.T) {
 	s := &OSSStorage{
 		publicEndpoint: "https://cdn.example.com",

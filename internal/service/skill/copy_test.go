@@ -4,6 +4,8 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,6 +31,7 @@ type fakeStorage struct {
 	putCount     int
 	putKeys      []string
 	deleteCount  int
+	deleteKeys   []string
 	copyErr      error
 	copyCount    int
 	copySrc      string
@@ -57,8 +60,15 @@ func (f *fakeStorage) GetObject(_ context.Context, _ string) (io.ReadCloser, err
 	}
 	return io.NopCloser(bytes.NewReader(nil)), nil
 }
-func (f *fakeStorage) DeleteObject(_ context.Context, _ string) error {
+func (f *fakeStorage) StatObject(_ context.Context, _ string) (storage.ObjectInfo, error) {
+	if f.getData != nil {
+		return storage.ObjectInfo{Size: int64(len(f.getData))}, nil
+	}
+	return storage.ObjectInfo{Size: 0}, nil
+}
+func (f *fakeStorage) DeleteObject(_ context.Context, key string) error {
 	f.deleteCount++
+	f.deleteKeys = append(f.deleteKeys, key)
 	return nil
 }
 func (f *fakeStorage) PutObject(_ context.Context, key string, _ io.Reader, _ int64, _ string) error {
@@ -82,6 +92,11 @@ func makeTestZip(name, desc, version string) []byte {
 	fw.Write([]byte(content))
 	w.Close()
 	return buf.Bytes()
+}
+
+func testSHA256Hex(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 // TestCreate_GetObjectFailure_NoDBMutation calls Service.Create with a failing
@@ -157,7 +172,7 @@ func TestCreate_PutObjectSuccess_DBMutationOccurs(t *testing.T) {
 		"result_tags", "result_readme", "result_id", "result_forked_from", "result_metadata", "attempts",
 		"owner_id", "space_id", "skill_id",
 	}).AddRow(
-		"task-1", "upload-1", "skill.zip", int64(len(zipData)), "skills/upload-1/skill.zip", "sha256abc",
+		"task-1", "upload-1", "skill.zip", int64(len(zipData)), "skills/upload-1/skill.zip", testSHA256Hex(zipData),
 		"success", "My Skill", "A description", "1.0.0",
 		[]byte(`["tag1"]`), "# My Skill\nContent", "", "", nil, 0,
 		"user-1", "space-1", "",
@@ -199,8 +214,8 @@ func TestCreate_PutObjectSuccess_DBMutationOccurs(t *testing.T) {
 	if store.putCount != 2 {
 		t.Errorf("PutObject call count = %d, want 2", store.putCount)
 	}
-	expectedZipKey := "skills/new-skill-id/v1.0.0/skill.zip"
-	expectedMdKey := "skills/new-skill-id/v1.0.0/SKILL.md"
+	expectedZipKey := "skills/new-skill-id/versions/new-skill-id/skill.zip"
+	expectedMdKey := "skills/new-skill-id/versions/new-skill-id/SKILL.md"
 	if len(store.putKeys) >= 2 {
 		if store.putKeys[0] != expectedZipKey {
 			t.Errorf("PutObject key[0] = %q, want %q", store.putKeys[0], expectedZipKey)
@@ -256,7 +271,7 @@ func TestUpdate_GetObjectFailure_NoDBMutation(t *testing.T) {
 		"owner_id", "space_id", "skill_id",
 	}).AddRow(
 		"task-2", "upload-2", "new-skill.zip", int64(2048), "skills/upload-2/new-skill.zip", "newsha",
-		"success", "New Skill", "New desc", "2.0.0",
+		"success", "Old Skill", "New desc", "2.0.0",
 		[]byte(`["new"]`), "# New\nContent", "", "", nil, 0,
 		"user-1", "space-1", "skill-1",
 	)
@@ -279,6 +294,65 @@ func TestUpdate_GetObjectFailure_NoDBMutation(t *testing.T) {
 	// Verify no DB mutations (sqlmock catches unexpected queries)
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unexpected DB calls: %v", err)
+	}
+}
+
+func TestUpdate_ReuploadNameMismatchDeletesTempObject(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	store := &fakeStorage{}
+	repo := skillrepo.New(db)
+	catRepo := categoryrepo.New(db)
+	svc := New(repo, catRepo, store, func() string { return "id" })
+	now := time.Now()
+
+	mock.ExpectQuery("SELECT .+ FROM skills").
+		WithArgs("skill-1").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "name", "display_name", "icon_url", "source_skill_id", "current_version_id",
+			"description", "category_id", "tags", "owner_id", "owner_name",
+			"space_id", "visibility", "version", "readme_content", "file_name", "file_url",
+			"file_size", "file_sha256", "created_at", "updated_at",
+			"resolved_version", "version_storage", "view_count", "download_count",
+		}).AddRow(
+			"skill-1", "octo-style", "octo-style", "", "", "",
+			"desc", "cat-1", []byte(`[]`), "user-1", "User One",
+			"space-1", "space", "1.0.0", "old readme", "old.zip", "skills/skill-1/v1.0.0/old.zip",
+			int64(512), "oldsha", now, now,
+			"1.0.0", "", int64(0), int64(0),
+		))
+	mock.ExpectQuery("SELECT .+ FROM parse_tasks WHERE id").
+		WithArgs("task-mismatch").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "upload_id", "file_name", "file_size", "file_url", "file_sha256",
+			"status", "result_name", "result_description", "result_version",
+			"result_tags", "result_readme", "result_id", "result_forked_from", "result_metadata", "attempts",
+			"owner_id", "space_id", "skill_id",
+		}).AddRow(
+			"task-mismatch", "upload-mismatch", "skill.zip", int64(2048), "skill-uploads/upload-mismatch/skill.zip", "sha",
+			"success", "gstack-guard", "desc", "2.0.0",
+			[]byte(`[]`), "", "", "", nil, 0,
+			"user-1", "space-1", "skill-1",
+		))
+
+	_, updateErr := svc.Update(context.Background(), "skill-1", "user-1", "space-1", UpdateParams{
+		ParseTaskID: "task-mismatch",
+	})
+	if !errors.Is(updateErr, ErrNameMismatch) {
+		t.Fatalf("Update error = %v, want ErrNameMismatch", updateErr)
+	}
+	if len(store.deleteKeys) != 1 || store.deleteKeys[0] != "skill-uploads/upload-mismatch/skill.zip" {
+		t.Fatalf("deleteKeys=%v, want temp upload cleanup", store.deleteKeys)
+	}
+	if store.putCount != 0 {
+		t.Fatalf("PutObject count=%d, want 0", store.putCount)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -345,23 +419,22 @@ func TestObjectKey_Format(t *testing.T) {
 		{
 			name:    "standard",
 			skillID: "abc-123",
-			version: "1.0.0",
-			wantZip: "skills/abc-123/v1.0.0/skill.zip",
-			wantMd:  "skills/abc-123/v1.0.0/SKILL.md",
+			version: "ver-1",
+			wantZip: "skills/abc-123/versions/ver-1/skill.zip",
+			wantMd:  "skills/abc-123/versions/ver-1/SKILL.md",
 		},
 		{
 			name:    "complex version",
 			skillID: "def-456",
-			version: "2.1.0-beta",
-			wantZip: "skills/def-456/v2.1.0-beta/skill.zip",
-			wantMd:  "skills/def-456/v2.1.0-beta/SKILL.md",
+			version: "ver-2",
+			wantZip: "skills/def-456/versions/ver-2/skill.zip",
+			wantMd:  "skills/def-456/versions/ver-2/SKILL.md",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotZip := fmt.Sprintf("skills/%s/v%s/skill.zip", tt.skillID, tt.version)
-			gotMd := fmt.Sprintf("skills/%s/v%s/SKILL.md", tt.skillID, tt.version)
+			gotZip, gotMd := versionObjectKeys(tt.skillID, tt.version)
 			if gotZip != tt.wantZip {
 				t.Errorf("zip key = %q, want %q", gotZip, tt.wantZip)
 			}
@@ -392,7 +465,7 @@ func TestCreate_SourceSkillID_FromParam(t *testing.T) {
 		"result_tags", "result_readme", "result_id", "result_forked_from", "result_metadata", "attempts",
 		"owner_id", "space_id", "skill_id",
 	}).AddRow(
-		"task-f", "upload-f", "skill.zip", int64(len(zipData)), "skills/upload-f/skill.zip", "sha",
+		"task-f", "upload-f", "skill.zip", int64(len(zipData)), "skills/upload-f/skill.zip", testSHA256Hex(zipData),
 		"success", "Forked Skill", "desc", "1.0.0",
 		[]byte(`[]`), "", "result-id-candidate", "", nil, 0,
 		"user-1", "space-1", "",

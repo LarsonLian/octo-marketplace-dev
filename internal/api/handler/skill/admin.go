@@ -1,7 +1,6 @@
 package skill
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 
@@ -20,7 +19,7 @@ func (h *Handler) RegisterAdmin(r *gin.Engine, adminAuth *middleware.AdminAuthen
 	admin.POST("", h.AdminCreate)
 	admin.PATCH("/:skill_id", h.AdminUpdate)
 	admin.DELETE("/:skill_id", h.AdminDelete)
-	admin.GET("/:skill_id/skill-md", h.AdminGetSkillMD)
+	admin.GET("/:skill_id/skill_md", h.AdminGetSkillMD)
 	admin.POST("/:skill_id/reupload", h.AdminReupload)
 }
 
@@ -36,10 +35,12 @@ func (h *Handler) RegisterAdmin(r *gin.Engine, adminAuth *middleware.AdminAuthen
 // @Param category_id query string false "Category ID"
 // @Param tags query string false "Comma-separated tags"
 // @Param sort query string false "Sort: latest, downloads, views, comprehensive"
-// @Param offset query int false "Offset"
+// @Param page query int false "Page number, default 1"
 // @Param page_size query int false "Page size"
 // @Success 200 {object} apiresponse.OffsetList[skillsvc.SkillItem]
 // @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
+// @Failure 404 {object} apiresponse.Error "NOT_FOUND"
 // @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
 // @Router /admin/skills [get]
 func (h *Handler) AdminList(c *gin.Context) {
@@ -56,7 +57,14 @@ func (h *Handler) AdminList(c *gin.Context) {
 		apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "invalid sort parameter", nil, "")
 		return
 	}
-	offset := parseOffset(c.Query("offset"))
+	page := parsePage(c.Query("page"))
+	offset := (page - 1) * limit
+	if rawOffset := c.Query("offset"); rawOffset != "" {
+		offset = parseOffset(rawOffset)
+		if limit > 0 {
+			page = offset/limit + 1
+		}
+	}
 
 	result, err := h.svc.AdminList(c.Request.Context(), skillsvc.AdminListParams{
 		Query:      c.Query("q"),
@@ -69,10 +77,6 @@ func (h *Handler) AdminList(c *gin.Context) {
 	if err != nil {
 		apiresponse.Fail(c, http.StatusInternalServerError, errcode.InternalError, "internal error", nil, "")
 		return
-	}
-	page := 1
-	if limit > 0 {
-		page = offset/limit + 1
 	}
 	apiresponse.Offset(c, result.Items, result.Total, page, limit)
 }
@@ -88,6 +92,7 @@ func (h *Handler) AdminList(c *gin.Context) {
 // @Param skill_id path string true "Skill ID"
 // @Success 200 {object} apiresponse.Data[skillsvc.SkillItem]
 // @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
 // @Failure 404 {object} apiresponse.Error "NOT_FOUND"
 // @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
 // @Router /admin/skills/{skill_id} [get]
@@ -111,14 +116,14 @@ func (h *Handler) AdminGet(c *gin.Context) {
 
 // AdminCreateRequest is the JSON body for POST /api/v1/admin/skills.
 type AdminCreateRequest struct {
-	ParseTaskID string          `json:"parse_task_id" binding:"required"`
-	Name        string          `json:"name"`
-	DisplayName string          `json:"display_name"`
-	IconURL     string          `json:"icon_url"`
-	Description string          `json:"description"`
-	CategoryID  string          `json:"category_id"`
-	Tags        json.RawMessage `json:"tags"`
-	Version     string          `json:"version"`
+	ParseTaskID string   `json:"parse_task_id" binding:"required"`
+	Name        string   `json:"name"`
+	DisplayName string   `json:"display_name"`
+	IconURL     string   `json:"icon_url"`
+	Description string   `json:"description"`
+	CategoryID  string   `json:"category_id"`
+	Tags        []string `json:"tags"`
+	Version     string   `json:"version"`
 }
 
 // AdminCreate godoc
@@ -133,6 +138,8 @@ type AdminCreateRequest struct {
 // @Success 201 {object} apiresponse.Data[skillsvc.SkillItem]
 // @Failure 400 {object} apiresponse.Error "VALIDATION_ERROR"
 // @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
+// @Failure 404 {object} apiresponse.Error "NOT_FOUND"
 // @Failure 409 {object} apiresponse.Error "CONFLICT"
 // @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
 // @Router /admin/skills [post]
@@ -154,7 +161,7 @@ func (h *Handler) AdminCreate(c *gin.Context) {
 		IconURL:     req.IconURL,
 		Description: req.Description,
 		CategoryID:  req.CategoryID,
-		Tags:        req.Tags,
+		Tags:        marshalTags(req.Tags),
 		Version:     req.Version,
 		AdminUID:    identity.UID,
 		AdminName:   identity.Name,
@@ -188,12 +195,12 @@ func (h *Handler) AdminCreate(c *gin.Context) {
 
 // AdminUpdateRequest is the JSON body for PATCH /api/v1/admin/skills/:skill_id.
 type AdminUpdateRequest struct {
-	Name        *string         `json:"name"`
-	DisplayName *string         `json:"display_name"`
-	IconURL     *string         `json:"icon_url"`
-	Description *string         `json:"description"`
-	CategoryID  *string         `json:"category_id"`
-	Tags        json.RawMessage `json:"tags"`
+	Name        *string   `json:"name"`
+	DisplayName *string   `json:"display_name"`
+	IconURL     *string   `json:"icon_url"`
+	Description *string   `json:"description"`
+	CategoryID  *string   `json:"category_id"`
+	Tags        *[]string `json:"tags"`
 }
 
 // AdminUpdate godoc
@@ -209,6 +216,7 @@ type AdminUpdateRequest struct {
 // @Success 200 {object} apiresponse.Data[skillsvc.SkillItem]
 // @Failure 400 {object} apiresponse.Error "VALIDATION_ERROR"
 // @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
 // @Failure 404 {object} apiresponse.Error "NOT_FOUND"
 // @Failure 409 {object} apiresponse.Error "CONFLICT"
 // @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
@@ -230,7 +238,7 @@ func (h *Handler) AdminUpdate(c *gin.Context) {
 		IconURL:     req.IconURL,
 		Description: req.Description,
 		CategoryID:  req.CategoryID,
-		Tags:        req.Tags,
+		Tags:        marshalOptionalTags(req.Tags),
 	})
 	if err != nil {
 		if errors.Is(err, skillsvc.ErrNotFound) {
@@ -266,6 +274,7 @@ func (h *Handler) AdminUpdate(c *gin.Context) {
 // @Param skill_id path string true "Skill ID"
 // @Success 200 {object} apiresponse.Data[apiresponse.EmptyResp]
 // @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
 // @Failure 404 {object} apiresponse.Error "NOT_FOUND"
 // @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
 // @Router /admin/skills/{skill_id} [delete]
@@ -292,14 +301,16 @@ func (h *Handler) AdminDelete(c *gin.Context) {
 // @Description Return SKILL.md for a public skill without Space restriction.
 // @Tags admin_skill
 // @ID admin_skill.skillmd.get
-// @Produce text/markdown
+// @Accept json
+// @Produce json
 // @Security Bearer
 // @Param skill_id path string true "Skill ID"
-// @Success 200 {string} string "Markdown content"
+// @Success 200 {object} apiresponse.Data[SkillMDResponse]
 // @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
 // @Failure 404 {object} apiresponse.Error "NOT_FOUND"
 // @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
-// @Router /admin/skills/{skill_id}/skill-md [get]
+// @Router /admin/skills/{skill_id}/skill_md [get]
 func (h *Handler) AdminGetSkillMD(c *gin.Context) {
 	if _, ok := middleware.Identity(c); !ok {
 		apiresponse.Fail(c, http.StatusUnauthorized, errcode.Unauthorized, "authentication is required", nil, "")
@@ -319,15 +330,15 @@ func (h *Handler) AdminGetSkillMD(c *gin.Context) {
 		apiresponse.Fail(c, http.StatusInternalServerError, errcode.InternalError, "internal error", nil, "")
 		return
 	}
-	c.Data(http.StatusOK, "text/markdown; charset=utf-8", data)
+	apiresponse.OK(c, SkillMDResponse{Content: string(data)})
 }
 
 // AdminReuploadRequest is the JSON body for POST /api/v1/admin/skills/:skill_id/reupload.
 type AdminReuploadRequest struct {
-	ParseTaskID string          `json:"parse_task_id" binding:"required"`
-	Version     string          `json:"version"`
-	Changelog   string          `json:"changelog"`
-	Tags        json.RawMessage `json:"tags"`
+	ParseTaskID string   `json:"parse_task_id" binding:"required"`
+	Version     string   `json:"version"`
+	Changelog   string   `json:"changelog"`
+	Tags        []string `json:"tags"`
 }
 
 // AdminReupload godoc
@@ -343,6 +354,7 @@ type AdminReuploadRequest struct {
 // @Success 200 {object} apiresponse.Data[skillsvc.SkillItem]
 // @Failure 400 {object} apiresponse.Error "VALIDATION_ERROR"
 // @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
 // @Failure 404 {object} apiresponse.Error "NOT_FOUND"
 // @Failure 409 {object} apiresponse.Error "CONFLICT"
 // @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
@@ -363,7 +375,7 @@ func (h *Handler) AdminReupload(c *gin.Context) {
 		ParseTaskID: req.ParseTaskID,
 		Version:     req.Version,
 		Changelog:   req.Changelog,
-		Tags:        req.Tags,
+		Tags:        marshalTags(req.Tags),
 		AdminUID:    identity.UID,
 	})
 	if err != nil {
@@ -377,6 +389,10 @@ func (h *Handler) AdminReupload(c *gin.Context) {
 		}
 		if errors.Is(err, skillsvc.ErrIDMismatch) {
 			apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "zip id does not match skill id", nil, "")
+			return
+		}
+		if errors.Is(err, skillsvc.ErrNameMismatch) {
+			apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "skill name does not match SKILL.md name", nil, "")
 			return
 		}
 		if errors.Is(err, skillsvc.ErrParseTaskConsumed) {

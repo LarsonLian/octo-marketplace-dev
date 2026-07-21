@@ -42,7 +42,7 @@ func (h *Handler) Register(rg *gin.RouterGroup) {
 	rg.GET("/skills", h.List)
 	rg.GET("/skills/:skill_id", h.Get)
 	rg.GET("/skills/:skill_id/versions", h.ListVersions)
-	rg.GET("/skills/:skill_id/skill-md", h.GetSkillMD)
+	rg.GET("/skills/:skill_id/skill_md", h.GetSkillMD)
 	rg.POST("/skills", h.Create)
 	rg.PATCH("/skills/:skill_id", h.Update)
 	rg.DELETE("/skills/:skill_id", h.Delete)
@@ -53,7 +53,7 @@ func (h *Handler) Register(rg *gin.RouterGroup) {
 	legacy.GET("", h.List)
 	legacy.GET("/:skill_id", h.Get)
 	legacy.GET("/:skill_id/versions", h.ListVersions)
-	legacy.GET("/:skill_id/skill-md", h.GetSkillMD)
+	legacy.GET("/:skill_id/skill_md", h.GetSkillMD)
 	legacy.POST("", h.Create)
 	legacy.PUT("/:skill_id", h.Update)
 	legacy.DELETE("/:skill_id", h.Delete)
@@ -69,7 +69,7 @@ var validSortModes = map[string]bool{
 
 // List godoc
 // @Summary List skills
-// @Description List skills visible in the current Space with sort and pagination.
+// @Description List skills visible in the current Space with cursor pagination.
 // @Tags skill
 // @ID skill.list
 // @Accept json
@@ -79,9 +79,8 @@ var validSortModes = map[string]bool{
 // @Param category_id query string false "Category ID"
 // @Param tags query string false "Comma-separated tag names; all tags must match"
 // @Param tag query []string false "Repeated tag names; all tags must match"
-// @Param sort query string false "Sort mode: comprehensive (default), latest, downloads, views"
-// @Param cursor query string false "Cursor for next page (latest sort only)"
-// @Param offset query int false "Offset for pagination (comprehensive/downloads/views)"
+// @Param sort query string false "Sort mode: latest (default), comprehensive, downloads, views"
+// @Param cursor query string false "Cursor for next page; used with default/latest sort"
 // @Param page_size query int false "Page size, default 20, max 50"
 // @Success 200 {object} apiresponse.CursorList[SkillResponse]
 // @Failure 400 {object} apiresponse.Error "VALIDATION_ERROR"
@@ -99,16 +98,11 @@ func (h *Handler) List(c *gin.Context) {
 	spaceID := middleware.SpaceID(c)
 	limit := parseLimit(pageSizeQuery(c))
 
-	sort := c.Query("sort")
-	if sort == "" {
-		sort = skillrepo.SortComprehensive
-	}
+	sort, useCursor := listSortAndPagination(c.Query("sort"))
 	if !validSortModes[sort] {
 		apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "invalid sort parameter, must be one of: comprehensive, latest, downloads, views", nil, "")
 		return
 	}
-
-	offset := parseOffset(c.Query("offset"))
 
 	result, err := h.svc.List(c.Request.Context(), skillsvc.ListParams{
 		SpaceID:    spaceID,
@@ -118,26 +112,26 @@ func (h *Handler) List(c *gin.Context) {
 		Tags:       tagFilters(c),
 		Cursor:     c.Query("cursor"),
 		Limit:      limit,
-		Offset:     offset,
 		Sort:       sort,
+		UseCursor:  useCursor,
 	})
 	if err != nil {
 		apiresponse.Fail(c, http.StatusInternalServerError, errcode.InternalError, "internal error", nil, "")
 		return
 	}
 
-	if sort == skillrepo.SortLatest {
-		// Cursor-based pagination for latest sort
-		nextCursor := cursorValue(result.NextCursor)
-		apiresponse.Cursor(c, result.Items, nextCursor != "", nextCursor)
-	} else {
-		// Offset-based pagination for comprehensive/downloads/views
-		page := 1
-		if limit > 0 {
-			page = offset/limit + 1
-		}
-		apiresponse.Offset(c, result.Items, result.Total, page, limit)
+	nextCursor := ""
+	if result.NextCursor != nil {
+		nextCursor = *result.NextCursor
 	}
+	apiresponse.Cursor(c, result.Items, nextCursor != "", nextCursor)
+}
+
+func listSortAndPagination(sort string) (string, bool) {
+	if sort == "" {
+		return skillrepo.SortLatest, true
+	}
+	return sort, true
 }
 
 // ListMine godoc
@@ -224,17 +218,17 @@ func (h *Handler) Get(c *gin.Context) {
 
 // createRequest is the JSON body for POST /api/v1/skill.
 type CreateRequest struct {
-	ParseTaskID   string          `json:"parse_task_id" binding:"required"`
-	Name          string          `json:"name"`
-	DisplayName   string          `json:"display_name"`
-	IconURL       string          `json:"icon_url"`
-	Description   string          `json:"description"`
-	CategoryID    string          `json:"category_id"`
-	Tags          json.RawMessage `json:"tags"`
-	Visibility    string          `json:"visibility"`
-	Version       string          `json:"version"`
-	Changelog     string          `json:"changelog"`
-	SourceSkillID string          `json:"source_skill_id"`
+	ParseTaskID   string   `json:"parse_task_id" binding:"required"`
+	Name          string   `json:"name"`
+	DisplayName   string   `json:"display_name"`
+	IconURL       string   `json:"icon_url"`
+	Description   string   `json:"description"`
+	CategoryID    string   `json:"category_id"`
+	Tags          []string `json:"tags"`
+	Visibility    string   `json:"visibility"`
+	Version       string   `json:"version"`
+	Changelog     string   `json:"changelog"`
+	SourceSkillID string   `json:"source_skill_id"`
 }
 
 // Create godoc
@@ -275,7 +269,7 @@ func (h *Handler) Create(c *gin.Context) {
 		IconURL:       req.IconURL,
 		Description:   req.Description,
 		CategoryID:    req.CategoryID,
-		Tags:          req.Tags,
+		Tags:          marshalTags(req.Tags),
 		Visibility:    req.Visibility,
 		Version:       req.Version,
 		Changelog:     req.Changelog,
@@ -314,16 +308,16 @@ func (h *Handler) Create(c *gin.Context) {
 
 // updateRequest is the JSON body for PUT /api/v1/skill/:id.
 type UpdateRequest struct {
-	Name        *string         `json:"name"`
-	DisplayName *string         `json:"display_name"`
-	IconURL     *string         `json:"icon_url"`
-	Description *string         `json:"description"`
-	CategoryID  *string         `json:"category_id"`
-	Tags        json.RawMessage `json:"tags"`
-	Visibility  *string         `json:"visibility"`
-	Version     *string         `json:"version"`
-	ParseTaskID string          `json:"parse_task_id"`
-	Changelog   string          `json:"changelog"`
+	Name        *string   `json:"name"`
+	DisplayName *string   `json:"display_name"`
+	IconURL     *string   `json:"icon_url"`
+	Description *string   `json:"description"`
+	CategoryID  *string   `json:"category_id"`
+	Tags        *[]string `json:"tags"`
+	Visibility  *string   `json:"visibility"`
+	Version     *string   `json:"version"`
+	ParseTaskID string    `json:"parse_task_id"`
+	Changelog   string    `json:"changelog"`
 }
 
 // Update godoc
@@ -365,7 +359,7 @@ func (h *Handler) Update(c *gin.Context) {
 		IconURL:     req.IconURL,
 		Description: req.Description,
 		CategoryID:  req.CategoryID,
-		Tags:        req.Tags,
+		Tags:        marshalOptionalTags(req.Tags),
 		Visibility:  req.Visibility,
 		Version:     req.Version,
 		ParseTaskID: req.ParseTaskID,
@@ -386,6 +380,10 @@ func (h *Handler) Update(c *gin.Context) {
 		}
 		if errors.Is(err, skillsvc.ErrIDMismatch) {
 			apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "zip id does not match skill id", nil, "")
+			return
+		}
+		if errors.Is(err, skillsvc.ErrNameMismatch) {
+			apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "skill name does not match SKILL.md name", nil, "")
 			return
 		}
 		if errors.Is(err, skillsvc.ErrParseTaskConsumed) {
@@ -420,6 +418,7 @@ func (h *Handler) Update(c *gin.Context) {
 // @Success 200 {object} apiresponse.Data[SkillTagList]
 // @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
 // @Failure 403 {object} apiresponse.Error "FORBIDDEN"
+// @Failure 404 {object} apiresponse.Error "NOT_FOUND"
 // @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
 // @Router /skills/tags [get]
 func (h *Handler) ListTags(c *gin.Context) {
@@ -510,19 +509,26 @@ func (h *Handler) ListVersions(c *gin.Context) {
 	apiresponse.OK(c, gin.H{"items": items})
 }
 
+// SkillMDResponse contains SKILL.md markdown content.
+type SkillMDResponse struct {
+	Content string `json:"content"`
+}
+
 // GetSkillMD godoc
 // @Summary Get SKILL.md
 // @Description Return the SKILL.md content for the current version of a visible Skill.
 // @Tags skill
 // @ID skill.skillmd.get
-// @Produce text/markdown
+// @Accept json
+// @Produce json
 // @Security Bearer
 // @Param skill_id path string true "Skill ID"
-// @Success 200 {string} string "Markdown content"
+// @Success 200 {object} apiresponse.Data[SkillMDResponse]
 // @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
 // @Failure 404 {object} apiresponse.Error "NOT_FOUND"
 // @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
-// @Router /skills/{skill_id}/skill-md [get]
+// @Router /skills/{skill_id}/skill_md [get]
 func (h *Handler) GetSkillMD(c *gin.Context) {
 	identity, ok := middleware.Identity(c)
 	if !ok {
@@ -546,7 +552,7 @@ func (h *Handler) GetSkillMD(c *gin.Context) {
 		return
 	}
 
-	c.Data(http.StatusOK, "text/markdown; charset=utf-8", data)
+	apiresponse.OK(c, SkillMDResponse{Content: string(data)})
 }
 
 func pageSizeQuery(c *gin.Context) string {
@@ -597,6 +603,17 @@ func parseOffset(s string) int {
 	return n
 }
 
+func parsePage(s string) int {
+	if s == "" {
+		return 1
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n <= 0 {
+		return 1
+	}
+	return n
+}
+
 func parseTagLimit(s string) int {
 	if s == "" {
 		return 50
@@ -609,6 +626,21 @@ func parseTagLimit(s string) int {
 		return 100
 	}
 	return n
+}
+
+func marshalTags(tags []string) json.RawMessage {
+	if tags == nil {
+		return nil
+	}
+	raw, _ := json.Marshal(tags)
+	return raw
+}
+
+func marshalOptionalTags(tags *[]string) json.RawMessage {
+	if tags == nil {
+		return nil
+	}
+	return marshalTags(*tags)
 }
 
 func tagFilters(c *gin.Context) []string {

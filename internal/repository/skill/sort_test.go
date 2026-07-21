@@ -19,11 +19,11 @@ func TestListSortComprehensive(t *testing.T) {
 
 	// comprehensive sort → COUNT query + data query with OFFSET
 	mock.ExpectQuery("SELECT COUNT").
-		WithArgs("space-1", "space-1", "user-1", "space-1").
+		WithArgs("space-1", "user-1", "space-1").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 
 	mock.ExpectQuery("ORDER BY .+COALESCE.+download_count.+ \\* 5").
-		WithArgs("space-1", "space-1", "user-1", "space-1", 20, 0).
+		WithArgs("space-1", "user-1", "space-1", 20, 0).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "name", "display_name", "icon_url", "source_skill_id", "current_version_id",
 			"description", "category_id", "tags",
@@ -63,7 +63,7 @@ func TestListSortComprehensive(t *testing.T) {
 	}
 }
 
-func TestListSortLatestUsesCursor(t *testing.T) {
+func TestListSortLatestUsesOffset(t *testing.T) {
 	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
 	if err != nil {
 		t.Fatal(err)
@@ -72,9 +72,12 @@ func TestListSortLatestUsesCursor(t *testing.T) {
 
 	now := time.Now().UTC()
 
-	// latest sort → cursor-based pagination (no COUNT query)
+	// public latest sort → offset pagination to keep /skills on one response envelope.
+	mock.ExpectQuery("SELECT COUNT").
+		WithArgs("space-1", "user-1", "space-1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	mock.ExpectQuery("ORDER BY s\\.created_at DESC, s\\.id DESC").
-		WithArgs("space-1", "space-1", "user-1", "space-1", 21). // limit+1
+		WithArgs("space-1", "user-1", "space-1", 20, 0).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "name", "display_name", "icon_url", "source_skill_id", "current_version_id",
 			"description", "category_id", "tags",
@@ -98,10 +101,64 @@ func TestListSortLatestUsesCursor(t *testing.T) {
 		t.Fatal(err)
 	}
 	if result.NextCursor != nil {
-		t.Errorf("NextCursor should be nil when fewer results than limit+1")
+		t.Errorf("NextCursor should be nil for offset pagination")
+	}
+	if result.Total != 1 {
+		t.Errorf("Total = %d, want 1", result.Total)
 	}
 	if len(result.Items) != 1 {
 		t.Fatalf("Items count = %d, want 1", len(result.Items))
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestListSortLatestUsesCursorWhenOptedIn(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	now := time.Now().UTC()
+
+	mock.ExpectQuery("ORDER BY s\\.created_at DESC, s\\.id DESC").
+		WithArgs("space-1", "user-1", "space-1", 2).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "name", "display_name", "icon_url", "source_skill_id", "current_version_id",
+			"description", "category_id", "tags",
+			"owner_id", "owner_name", "space_id", "visibility", "version",
+			"readme_content", "file_name", "file_url", "file_size", "file_sha256",
+			"created_at", "updated_at", "resolved_version", "version_storage", "view_count", "download_count",
+		}).
+			AddRow("s2", "Skill 2", "Skill 2", "", "", "",
+				"desc", "cat-1", []byte(`[]`),
+				"user-1", "Alice", "space-1", "space", "1.0.0",
+				"", "f.zip", "url", int64(100), "sha", now.Add(time.Second), now.Add(time.Second), "1.0.0", "", int64(0), int64(0)).
+			AddRow("s1", "Skill 1", "Skill 1", "", "", "",
+				"desc", "cat-1", []byte(`[]`),
+				"user-1", "Alice", "space-1", "space", "1.0.0",
+				"", "f.zip", "url", int64(100), "sha", now, now, "1.0.0", "", int64(0), int64(0)))
+
+	result, err := New(db).List(context.Background(), ListFilter{
+		SpaceID:   "space-1",
+		UserID:    "user-1",
+		Limit:     1,
+		Sort:      SortLatest,
+		UseCursor: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Total != 0 {
+		t.Errorf("Total = %d, want 0 for cursor pagination", result.Total)
+	}
+	if result.NextCursor == nil {
+		t.Fatal("NextCursor should be set for cursor pagination with an extra row")
+	}
+	if len(result.Items) != 1 || result.Items[0].ID != "s2" {
+		t.Fatalf("Items = %+v, want only s2", result.Items)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
@@ -129,11 +186,11 @@ func TestListSortDownloads(t *testing.T) {
 			"created_at", "updated_at", "resolved_version", "version_storage", "view_count", "download_count",
 		}).
 			AddRow("s1", "Skill 1", "Skill 1", "", "", "",
-			"desc", "cat-1", []byte(`[]`),
+				"desc", "cat-1", []byte(`[]`),
 				"user-1", "Alice", "space-1", "space", "1.0.0",
 				"", "f.zip", "url", int64(100), "sha", now, now, "1.0.0", "", int64(0), int64(50)).
 			AddRow("s2", "Skill 2", "Skill 2", "", "", "",
-			"desc", "cat-1", []byte(`[]`),
+				"desc", "cat-1", []byte(`[]`),
 				"user-2", "Bob", "space-1", "public", "1.0.0",
 				"", "f.zip", "url", int64(100), "sha", now, now, "1.0.0", "", int64(0), int64(10)))
 
@@ -217,7 +274,7 @@ func TestListOffsetPagination(t *testing.T) {
 
 	// Expect LIMIT ? OFFSET ? with 10, 10
 	mock.ExpectQuery("LIMIT .+ OFFSET").
-		WithArgs("space-1", "space-1", "user-1", "space-1", 10, 10).
+		WithArgs("space-1", "user-1", "space-1", 10, 10).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "name", "display_name", "icon_url", "source_skill_id", "current_version_id",
 			"description", "category_id", "tags",
@@ -261,7 +318,7 @@ func TestListLimitMax50(t *testing.T) {
 
 	// Even with limit=100, should be capped to 50
 	mock.ExpectQuery("LIMIT .+ OFFSET").
-		WithArgs("space-1", "space-1", "user-1", "space-1", 50, 0).
+		WithArgs("space-1", "user-1", "space-1", 50, 0).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "name", "display_name", "icon_url", "source_skill_id", "current_version_id",
 			"description", "category_id", "tags",
@@ -275,6 +332,40 @@ func TestListLimitMax50(t *testing.T) {
 		UserID:  "user-1",
 		Limit:   100,
 		Sort:    SortComprehensive,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAdminListSearchMatchesNameAndDisplayNameFuzzy(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery("SELECT COUNT").
+		WithArgs("%auto%", "%auto%").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+
+	mock.ExpectQuery("s\\.name LIKE \\?.*s\\.display_name LIKE \\?").
+		WithArgs("%auto%", "%auto%", 20, 0).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "name", "display_name", "icon_url", "source_skill_id", "current_version_id",
+			"description", "category_id", "tags",
+			"owner_id", "owner_name", "space_id", "visibility", "version",
+			"readme_content", "file_name", "file_url", "file_size", "file_sha256",
+			"created_at", "updated_at", "resolved_version", "version_storage", "view_count", "download_count",
+		}))
+
+	_, err = New(db).AdminList(context.Background(), AdminListFilter{
+		Query: "auto",
+		Limit: 20,
+		Sort:  SortComprehensive,
 	})
 	if err != nil {
 		t.Fatal(err)

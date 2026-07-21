@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
+	categoryrepo "github.com/Mininglamp-OSS/octo-marketplace/internal/repository/category"
 	skillrepo "github.com/Mininglamp-OSS/octo-marketplace/internal/repository/skill"
 )
 
@@ -27,11 +29,11 @@ func TestCanView(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:     "public cross-space is hidden",
+			name:     "public cross-space is visible",
 			row:      &skillrepo.SkillRow{Visibility: "public", SpaceID: "s1", OwnerID: "u1"},
 			spaceID:  "s2",
 			userID:   "u2",
-			expected: false,
+			expected: true,
 		},
 		{
 			name:     "space same space",
@@ -131,6 +133,54 @@ func TestRowToItemFields(t *testing.T) {
 	}
 	if item.CreatedAt != "2026-07-14T12:00:00Z" {
 		t.Errorf("CreatedAt = %q", item.CreatedAt)
+	}
+}
+
+func TestDeleteSoftDeletesWithoutArtifactCleanup(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	store := &fakeStorage{}
+	svc := New(skillrepo.New(db), categoryrepo.New(db), store, func() string { return "id" })
+	now := time.Now()
+
+	currentStorage := `{"type":"s3","zip_object_key":"skills/user-skill/v2/skill.zip","skill_md_object_key":"skills/user-skill/v2/SKILL.md"}`
+
+	mock.ExpectQuery("SELECT .+ FROM skills").
+		WithArgs("user-skill").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "name", "display_name", "icon_url", "source_skill_id", "current_version_id",
+			"description", "category_id", "tags",
+			"owner_id", "owner_name", "space_id", "visibility", "version",
+			"readme_content", "file_name", "file_url", "file_size", "file_sha256",
+			"created_at", "updated_at",
+			"resolved_version", "version_storage",
+			"view_count", "download_count",
+		}).AddRow(
+			"user-skill", "octo-style", "octo-style", "", "", "v2",
+			"desc", "cat1", []byte(`[]`),
+			"user-1", "User One", "space-1", "space", "2.0.0",
+			"", "skill.zip", "skills/user-skill/v2/skill.zip", int64(2048), "sha2",
+			now, now,
+			"2.0.0", currentStorage,
+			int64(0), int64(0),
+		))
+	mock.ExpectExec("UPDATE skills").
+		WithArgs("user-skill").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	if err := svc.Delete(context.Background(), "user-skill", "user-1", "space-1"); err != nil {
+		t.Fatalf("Delete error = %v", err)
+	}
+
+	if len(store.deleteKeys) != 0 {
+		t.Fatalf("deleteKeys=%v, want no artifact cleanup for soft delete", store.deleteKeys)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 

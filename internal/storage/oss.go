@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 	"time"
 
@@ -132,6 +133,22 @@ func (s *OSSStorage) PresignGet(ctx context.Context, key string, expires time.Du
 	return s.publicPresignedURL(result.URL)
 }
 
+// StatObject returns object metadata from the backing object store.
+func (s *OSSStorage) StatObject(ctx context.Context, key string) (ObjectInfo, error) {
+	output, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(s.key(key)),
+	})
+	if err != nil {
+		return ObjectInfo{}, fmt.Errorf("oss stat object: %w", err)
+	}
+	size := int64(0)
+	if output.ContentLength != nil {
+		size = *output.ContentLength
+	}
+	return ObjectInfo{Size: size}, nil
+}
+
 // GetObject downloads an object from storage (uses internal endpoint).
 func (s *OSSStorage) GetObject(ctx context.Context, key string) (io.ReadCloser, error) {
 	output, err := s.client.GetObject(ctx, &s3.GetObjectInput{
@@ -217,7 +234,7 @@ func (s *OSSStorage) publicObjectURL(key string) (string, error) {
 	if s.publicPathStyle {
 		objectPath = strings.Trim(s.bucket, "/") + "/" + objectPath
 	}
-	public.Path = strings.TrimRight(public.Path, "/") + "/" + objectPath
+	public.Path = path.Join(public.Path, objectPath)
 	public.RawPath = ""
 	public.RawQuery = ""
 	public.Fragment = ""

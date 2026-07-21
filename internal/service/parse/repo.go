@@ -145,6 +145,25 @@ func (r *Repo) TransitionPendingToParsing(ctx context.Context, id string) (bool,
 	return rows == 1, nil
 }
 
+// RestoreParsingToPending rolls back the parsing claim when the worker cannot
+// accept the task. This keeps a 429 queue-full response genuinely retryable.
+func (r *Repo) RestoreParsingToPending(ctx context.Context, id string) (bool, error) {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE parse_tasks
+		 SET status = 'pending',
+		     attempts = CASE WHEN attempts > 0 THEN attempts - 1 ELSE 0 END
+		 WHERE id = ? AND status = 'parsing'`,
+		id)
+	if err != nil {
+		return false, err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rows == 1, nil
+}
+
 // UpdateFailed sets the parse task to failed with error info.
 func (r *Repo) UpdateFailed(ctx context.Context, id, errorCode, errorMessage string) error {
 	_, err := r.db.ExecContext(ctx,
@@ -170,6 +189,8 @@ func (r *Repo) UpdateSuccess(ctx context.Context, id string, name string, descri
 // 'parsing' status, its updated_at is older than staleTimeout, and attempts < maxAttempts.
 // Returns true if this caller won the race (affected rows == 1).
 func (r *Repo) TryRecoverStaleParsing(ctx context.Context, id string, staleSeconds int, maxAttempts int) (bool, error) {
+	// Marketplace persistence is MySQL, so this intentionally uses MySQL's
+	// INTERVAL syntax instead of trying to paper over dialect differences.
 	res, err := r.db.ExecContext(ctx,
 		`UPDATE parse_tasks
 		 SET updated_at = NOW(), attempts = attempts + 1

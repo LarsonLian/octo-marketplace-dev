@@ -3,6 +3,7 @@ package skill
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -92,6 +93,178 @@ func TestAdminGet_AcceptsPublic(t *testing.T) {
 	}
 	if item.Visibility != "public" {
 		t.Fatalf("expected visibility=public, got %s", item.Visibility)
+	}
+}
+
+func TestAdminDeleteSoftDeletesWithoutArtifactCleanup(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	store := &fakeStorage{}
+	svc := New(skillrepo.New(db), categoryrepo.New(db), store, func() string { return "id" })
+	now := time.Now()
+
+	currentStorage := `{"type":"s3","zip_object_key":"skills/admin-skill/v2/skill.zip","skill_md_object_key":"skills/admin-skill/v2/SKILL.md"}`
+
+	mock.ExpectQuery("SELECT .+ FROM skills").
+		WithArgs("admin-skill").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "name", "display_name", "icon_url", "source_skill_id", "current_version_id",
+			"description", "category_id", "tags",
+			"owner_id", "owner_name", "space_id", "visibility", "version",
+			"readme_content", "file_name", "file_url", "file_size", "file_sha256",
+			"created_at", "updated_at",
+			"resolved_version", "version_storage",
+			"view_count", "download_count",
+		}).AddRow(
+			"admin-skill", "octo-style", "octo-style", "", "", "v2",
+			"desc", "cat1", []byte(`[]`),
+			"owner-1", "Owner", "", "public", "2.0.0",
+			"", "skill.zip", "skills/admin-skill/v2/skill.zip", int64(2048), "sha2",
+			now, now,
+			"2.0.0", currentStorage,
+			int64(0), int64(0),
+		))
+	mock.ExpectExec("UPDATE skills").
+		WithArgs("admin-skill").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	if err := svc.AdminDelete(context.Background(), "admin-skill"); err != nil {
+		t.Fatalf("AdminDelete error = %v", err)
+	}
+
+	if len(store.deleteKeys) != 0 {
+		t.Fatalf("deleteKeys=%v, want no artifact cleanup for soft delete", store.deleteKeys)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAdminReuploadNameMismatchDeletesTempObject(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	store := &fakeStorage{}
+	svc := New(skillrepo.New(db), categoryrepo.New(db), store, func() string { return "id" })
+	now := time.Now()
+
+	mock.ExpectQuery("SELECT .+ FROM skills").
+		WithArgs("admin-skill").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "name", "display_name", "icon_url", "source_skill_id", "current_version_id",
+			"description", "category_id", "tags",
+			"owner_id", "owner_name", "space_id", "visibility", "version",
+			"readme_content", "file_name", "file_url", "file_size", "file_sha256",
+			"created_at", "updated_at",
+			"resolved_version", "version_storage",
+			"view_count", "download_count",
+		}).AddRow(
+			"admin-skill", "octo-style", "octo-style", "", "", "v1",
+			"desc", "cat1", []byte(`[]`),
+			"owner-1", "Owner", "", "public", "1.0.0",
+			"", "skill.zip", "skills/admin-skill/v1.0.0/skill.zip", int64(1024), "sha",
+			now, now,
+			"1.0.0", "",
+			int64(0), int64(0),
+		))
+	mock.ExpectQuery("SELECT .+ FROM parse_tasks WHERE id").
+		WithArgs("admin-task-mismatch").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "upload_id", "file_name", "file_size", "file_url", "file_sha256",
+			"status", "result_name", "result_description", "result_version",
+			"result_tags", "result_readme", "result_id", "result_forked_from", "result_metadata", "attempts",
+			"owner_id", "space_id", "skill_id",
+		}).AddRow(
+			"admin-task-mismatch", "upload-mismatch", "skill.zip", int64(2048), "skill-uploads/upload-mismatch/admin.zip", "sha",
+			"success", "gstack-guard", "desc", "2.0.0",
+			[]byte(`[]`), "", "", "", nil, 0,
+			"owner-1", "", "admin-skill",
+		))
+
+	_, err = svc.AdminReupload(context.Background(), "admin-skill", AdminReuploadParams{
+		ParseTaskID: "admin-task-mismatch",
+		AdminUID:    "admin",
+	})
+	if !errors.Is(err, ErrNameMismatch) {
+		t.Fatalf("AdminReupload error = %v, want ErrNameMismatch", err)
+	}
+	if len(store.deleteKeys) != 1 || store.deleteKeys[0] != "skill-uploads/upload-mismatch/admin.zip" {
+		t.Fatalf("deleteKeys=%v, want temp upload cleanup", store.deleteKeys)
+	}
+	if store.putCount != 0 {
+		t.Fatalf("PutObject count=%d, want 0", store.putCount)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAdminReuploadRejectsParseTaskForOtherSkill(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	store := &fakeStorage{}
+	svc := New(skillrepo.New(db), categoryrepo.New(db), store, func() string { return "id" })
+	now := time.Now()
+
+	mock.ExpectQuery("SELECT .+ FROM skills").
+		WithArgs("admin-skill-a").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "name", "display_name", "icon_url", "source_skill_id", "current_version_id",
+			"description", "category_id", "tags",
+			"owner_id", "owner_name", "space_id", "visibility", "version",
+			"readme_content", "file_name", "file_url", "file_size", "file_sha256",
+			"created_at", "updated_at",
+			"resolved_version", "version_storage",
+			"view_count", "download_count",
+		}).AddRow(
+			"admin-skill-a", "octo-style", "octo-style", "", "", "v1",
+			"desc", "cat1", []byte(`[]`),
+			"owner-1", "Owner", "", "public", "1.0.0",
+			"", "skill.zip", "skills/admin-skill-a/v1.0.0/skill.zip", int64(1024), "sha",
+			now, now,
+			"1.0.0", "",
+			int64(0), int64(0),
+		))
+	mock.ExpectQuery("SELECT .+ FROM parse_tasks WHERE id").
+		WithArgs("task-for-b").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "upload_id", "file_name", "file_size", "file_url", "file_sha256",
+			"status", "result_name", "result_description", "result_version",
+			"result_tags", "result_readme", "result_id", "result_forked_from", "result_metadata", "attempts",
+			"owner_id", "space_id", "skill_id",
+		}).AddRow(
+			"task-for-b", "upload-b", "skill.zip", int64(2048), "skill-uploads/upload-b/admin.zip", "sha",
+			"success", "octo-style", "desc", "2.0.0",
+			[]byte(`[]`), "", "", "", nil, 0,
+			"owner-1", "", "admin-skill-b",
+		))
+
+	_, err = svc.AdminReupload(context.Background(), "admin-skill-a", AdminReuploadParams{
+		ParseTaskID: "task-for-b",
+		AdminUID:    "admin",
+	})
+	if !errors.Is(err, ErrInvalidParseTask) {
+		t.Fatalf("AdminReupload error = %v, want ErrInvalidParseTask", err)
+	}
+	if len(store.deleteKeys) != 0 {
+		t.Fatalf("deleteKeys=%v, want no cleanup for another skill task", store.deleteKeys)
+	}
+	if store.putCount != 0 {
+		t.Fatalf("PutObject count=%d, want 0", store.putCount)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -329,8 +502,8 @@ func TestAdminUpdate_UpsertsGlobalTags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if string(item.Tags) != `["official"]` {
-		t.Fatalf("tags = %s", item.Tags)
+	if len(item.Tags) != 1 || item.Tags[0] != "official" {
+		t.Fatalf("tags = %v", item.Tags)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

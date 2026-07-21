@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -21,15 +22,27 @@ import (
 )
 
 const defaultWorkerPoolSize = 10
+const defaultWorkerQueueMultiplier = 10
 
 var (
 	statusUpdateTimeout = 5 * time.Second
+	ErrParseQueueFull   = errors.New("parse queue is full")
+	ErrParseIncomplete  = errors.New("parse task did not reach a terminal state")
 )
 
 // WorkerConfig holds configuration for the parse worker pool.
 type WorkerConfig struct {
 	PoolSize     int
+	QueueSize    int
 	ParseTimeout time.Duration
+}
+
+type parseJob struct {
+	taskID      string
+	objectKey   string
+	maxZipBytes int64
+	ctx         context.Context
+	done        chan struct{}
 }
 
 // Worker manages the async parsing goroutine pool.
@@ -37,8 +50,8 @@ type Worker struct {
 	store        storage.Storage
 	repo         *Repo
 	db           *sql.DB
-	sem          chan struct{}
-	wg           sync.WaitGroup
+	jobs         chan parseJob
+	jobWG        sync.WaitGroup
 	parseTimeout time.Duration
 }
 
@@ -48,45 +61,126 @@ func NewWorker(store storage.Storage, repo *Repo, db *sql.DB, cfg WorkerConfig) 
 	if poolSize <= 0 {
 		poolSize = defaultWorkerPoolSize
 	}
+	queueSize := cfg.QueueSize
+	if queueSize <= 0 {
+		queueSize = poolSize * defaultWorkerQueueMultiplier
+	}
 	parseTimeout := cfg.ParseTimeout
 	if parseTimeout <= 0 {
 		parseTimeout = time.Minute
 	}
-	return &Worker{
+	w := &Worker{
 		store:        store,
 		repo:         repo,
 		db:           db,
-		sem:          make(chan struct{}, poolSize),
+		jobs:         make(chan parseJob, queueSize),
 		parseTimeout: parseTimeout,
+	}
+	for i := 0; i < poolSize; i++ {
+		go w.run()
+	}
+	return w
+}
+
+func (w *Worker) run() {
+	for job := range w.jobs {
+		w.runJob(job)
 	}
 }
 
-// Submit enqueues a parse job. It does not block.
-func (w *Worker) Submit(taskID, objectKey string, maxZipBytes int64) {
-	w.wg.Add(1)
-	go func() {
-		defer w.wg.Done()
-		defer func() {
-			if r := recover(); r != nil {
-				log.Printf("[parse-worker] panic recovered for task %s: %v", taskID, r)
-				w.updateFailed(taskID, "INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
-			}
-		}()
-
-		w.sem <- struct{}{}
-		defer func() { <-w.sem }()
-
-		w.process(taskID, objectKey, maxZipBytes)
+func (w *Worker) runJob(job parseJob) {
+	defer w.jobWG.Done()
+	if job.done != nil {
+		defer close(job.done)
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[parse-worker] panic recovered for task %s: %v", job.taskID, r)
+			w.updateFailed(job.taskID, "INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
 	}()
+	w.process(job.ctx, job.taskID, job.objectKey, job.maxZipBytes)
+}
+
+// Submit enqueues a parse job without blocking. It returns ErrParseQueueFull
+// when both running and queued work are already at the configured bound.
+func (w *Worker) Submit(taskID, objectKey string, maxZipBytes int64) error {
+	w.jobWG.Add(1)
+	job := parseJob{
+		taskID:      taskID,
+		objectKey:   objectKey,
+		maxZipBytes: maxZipBytes,
+		ctx:         context.Background(),
+	}
+	select {
+	case w.jobs <- job:
+		return nil
+	default:
+		w.jobWG.Done()
+		return ErrParseQueueFull
+	}
+}
+
+// ProcessSync runs a parse job in the bounded worker pool and waits for it to finish.
+func (w *Worker) ProcessSync(ctx context.Context, taskID, objectKey string, maxZipBytes int64) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	done := make(chan struct{})
+	w.jobWG.Add(1)
+	job := parseJob{
+		taskID:      taskID,
+		objectKey:   objectKey,
+		maxZipBytes: maxZipBytes,
+		ctx:         ctx,
+		done:        done,
+	}
+	select {
+	case w.jobs <- job:
+	case <-ctx.Done():
+		w.jobWG.Done()
+		return ctx.Err()
+	}
+
+	select {
+	case <-done:
+		return w.ensureTerminalState(taskID)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (w *Worker) ensureTerminalState(taskID string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), statusUpdateTimeout)
+	defer cancel()
+	task, err := w.repo.GetByID(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	if task == nil {
+		return ErrParseIncomplete
+	}
+	switch task.Status {
+	case "success", "failed", "consumed":
+		return nil
+	case "parsing":
+		_ = w.repo.UpdateFailed(ctx, taskID, "INTERNAL_ERROR", publicParseErrorMessage("INTERNAL_ERROR"))
+		return ErrParseIncomplete
+	default:
+		return ErrParseIncomplete
+	}
 }
 
 // Wait blocks until all running parse jobs complete. Used for graceful shutdown.
 func (w *Worker) Wait() {
-	w.wg.Wait()
+	w.jobWG.Wait()
 }
 
-func (w *Worker) process(taskID, objectKey string, maxZipBytes int64) {
-	ctx, cancel := context.WithTimeout(context.Background(), w.parseTimeout)
+func (w *Worker) process(parent context.Context, taskID, objectKey string, maxZipBytes int64) {
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, w.parseTimeout)
 	defer cancel()
 
 	// 1. Download zip from storage to a temp file
@@ -99,6 +193,11 @@ func (w *Worker) process(taskID, objectKey string, maxZipBytes int64) {
 
 	zipPath := filepath.Join(tmpDir, "skill.zip")
 	if err := w.downloadToFile(ctx, objectKey, zipPath, maxZipBytes); err != nil {
+		if errors.Is(err, ErrFileTooLarge) {
+			w.deleteOversizedObject(objectKey)
+			w.updateFailed(taskID, "FILE_TOO_LARGE", "uploaded object exceeds size limit")
+			return
+		}
 		w.updateFailed(taskID, "INTERNAL_ERROR", "download failed: "+err.Error())
 		return
 	}
@@ -131,10 +230,15 @@ func (w *Worker) process(taskID, objectKey string, maxZipBytes int64) {
 		return
 	}
 
-	// 4.3 Check name uniqueness (same space, same owner, not deleted)
+	// 4.3 Check reupload target name before global duplicate checks, so a wrong package
+	// reports mismatch instead of colliding with an unrelated Skill.
 	task, err := w.repo.GetByID(ctx, taskID)
 	if err != nil {
 		w.updateFailed(taskID, "INTERNAL_ERROR", "cannot fetch parse task")
+		return
+	}
+	if mismatchErr := w.checkReuploadNameMatch(ctx, fm.Name, task.SpaceID, task.OwnerID, task.SkillID); mismatchErr != "" {
+		w.updateFailed(taskID, "SKILL_NAME_MISMATCH", mismatchErr)
 		return
 	}
 	if dupErr := w.checkNameDuplicate(ctx, fm.Name, task.SpaceID, task.OwnerID, task.SkillID); dupErr != "" {
@@ -173,7 +277,11 @@ func (w *Worker) process(taskID, objectKey string, maxZipBytes int64) {
 	forkedFrom := sanitizeString(fm.ForkedFrom, 36)
 	var metadataJSON json.RawMessage
 	if fm.Metadata != nil {
-		metadataJSON, _ = json.Marshal(fm.Metadata)
+		metadataJSON, err = json.Marshal(fm.Metadata)
+		if err != nil {
+			w.updateFailed(taskID, "INVALID_SKILL_MD", "metadata must be JSON-compatible")
+			return
+		}
 	}
 
 	// 6. Update task as success
@@ -181,6 +289,14 @@ func (w *Worker) process(taskID, objectKey string, maxZipBytes int64) {
 }
 
 func (w *Worker) downloadToFile(ctx context.Context, key, dst string, maxBytes int64) error {
+	info, err := w.store.StatObject(ctx, key)
+	if err != nil {
+		return err
+	}
+	if info.Size <= 0 || info.Size > maxBytes {
+		return ErrFileTooLarge
+	}
+
 	rc, err := w.store.GetObject(ctx, key)
 	if err != nil {
 		return err
@@ -199,9 +315,17 @@ func (w *Worker) downloadToFile(ctx context.Context, key, dst string, maxBytes i
 		return err
 	}
 	if n > maxBytes {
-		return fmt.Errorf("file exceeds size limit")
+		return ErrFileTooLarge
 	}
 	return nil
+}
+
+func (w *Worker) deleteOversizedObject(key string) {
+	ctx, cancel := context.WithTimeout(context.Background(), statusUpdateTimeout)
+	defer cancel()
+	if err := w.store.DeleteObject(ctx, key); err != nil {
+		log.Printf("[parse-worker] failed to delete oversized object %s: %v", key, err)
+	}
 }
 
 func fileSHA256(path string) (string, error) {
@@ -223,7 +347,7 @@ func (w *Worker) updateFailed(taskID, errorCode, errorMessage string) {
 	if errorMessage != "" {
 		log.Printf("[parse-worker] task %s failed code=%s detail=%s", taskID, errorCode, errorMessage)
 	}
-	_ = w.repo.UpdateFailed(ctx, taskID, errorCode, publicParseErrorMessage(errorCode))
+	_ = w.repo.UpdateFailed(ctx, taskID, errorCode, publicParseErrorMessageWithDetail(errorCode, errorMessage))
 }
 
 func (w *Worker) updateSuccess(taskID string, name string, description *string, version string, tags json.RawMessage, readme *string, sha256 string, resultID string, forkedFrom string, metadata json.RawMessage) {
@@ -303,6 +427,29 @@ func validateSkillDescription(desc string) string {
 	}
 	if strings.ContainsAny(desc, "<>") {
 		return "description 不能包含尖括号 < 或 >"
+	}
+	return ""
+}
+
+func (w *Worker) checkReuploadNameMatch(ctx context.Context, name, spaceID, ownerID, skillID string) string {
+	if skillID == "" {
+		return ""
+	}
+
+	var currentName string
+	err := w.db.QueryRowContext(ctx,
+		"SELECT name FROM skills WHERE id = ? AND space_id = ? AND owner_id = ?",
+		skillID, spaceID, ownerID,
+	).Scan(&currentName)
+	if err == sql.ErrNoRows {
+		return "目标 Skill 不存在或无权限"
+	}
+	if err != nil {
+		log.Printf("[parse-worker] checkReuploadNameMatch query error: %v", err)
+		return "内部错误：无法验证重新上传的 Skill 名称"
+	}
+	if name != currentName {
+		return fmt.Sprintf("重新上传的 Skill 与当前 Skill 不一致：上传 Skill name 为 %q，当前 Skill name 为 %q", name, currentName)
 	}
 	return ""
 }

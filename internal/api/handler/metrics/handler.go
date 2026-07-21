@@ -32,7 +32,22 @@ type trackRequest struct {
 	EventType    string `json:"event_type"`
 }
 
-// Track handles POST /api/v1/metrics/track.
+// Track godoc
+// @Summary Track metric event
+// @Description Record a view event for a visible marketplace resource.
+// @Tags metrics
+// @ID metrics.track
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param body body trackRequest true "Metric event"
+// @Success 200 {object} apiresponse.Data[apiresponse.EmptyResp]
+// @Failure 400 {object} apiresponse.Error "VALIDATION_ERROR"
+// @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
+// @Failure 403 {object} apiresponse.Error "FORBIDDEN"
+// @Failure 404 {object} apiresponse.Error "NOT_FOUND"
+// @Failure 500 {object} apiresponse.Error "INTERNAL_ERROR"
+// @Router /metrics/track [post]
 func (h *Handler) Track(c *gin.Context) {
 	var req trackRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -42,13 +57,13 @@ func (h *Handler) Track(c *gin.Context) {
 
 	// v1 only accepts event_type=view
 	if req.EventType != "view" {
-		apiresponse.Fail(c, http.StatusBadRequest, errcode.MetricsUnsupportedEvent, "Unsupported event_type; only \"view\" is accepted.", nil, "")
+		apiresponse.Fail(c, http.StatusBadRequest, errcode.MetricsUnsupportedEvent, "Unsupported event_type; only \"view\" is accepted.", map[string]any{"field": "event_type", "reason": "unsupported"}, "")
 		return
 	}
 
 	// v1 only accepts resource_type=skill
 	if req.ResourceType != "skill" {
-		apiresponse.Fail(c, http.StatusBadRequest, errcode.MetricsUnsupportedResource, "Unsupported resource_type; only \"skill\" is accepted.", nil, "")
+		apiresponse.Fail(c, http.StatusBadRequest, errcode.MetricsUnsupportedResource, "Unsupported resource_type; only \"skill\" is accepted.", map[string]any{"field": "resource_type", "reason": "unsupported"}, "")
 		return
 	}
 
@@ -74,14 +89,14 @@ func (h *Handler) Track(c *gin.Context) {
 		case errors.Is(err, metricssvc.ErrInvalidParam):
 			apiresponse.Fail(c, http.StatusBadRequest, errcode.BadRequest, "Invalid parameters.", nil, "")
 		case errors.Is(err, metricssvc.ErrUnsupportedType):
-			apiresponse.Fail(c, http.StatusBadRequest, errcode.MetricsUnsupportedResource, "Unsupported resource_type.", nil, "")
+			apiresponse.Fail(c, http.StatusBadRequest, errcode.MetricsUnsupportedResource, "Unsupported resource_type.", map[string]any{"field": "resource_type", "reason": "unsupported"}, "")
 		case errors.Is(err, metricssvc.ErrResourceNotVisible):
-			apiresponse.Fail(c, http.StatusBadRequest, errcode.MetricsResourceNotVisible, "Resource not found or not visible.", nil, "")
+			apiresponse.Fail(c, http.StatusNotFound, errcode.MetricsResourceNotVisible, "Resource not found or not visible.", map[string]any{"resource": req.ResourceType}, "")
 		default:
 			apiresponse.Fail(c, http.StatusInternalServerError, errcode.InternalError, "Internal error.", nil, "")
 		}
 		return
 	}
 
-	c.Status(http.StatusNoContent)
+	apiresponse.Empty(c)
 }

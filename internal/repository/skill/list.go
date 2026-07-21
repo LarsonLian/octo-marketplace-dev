@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -24,11 +25,12 @@ type ListFilter struct {
 	Query      string
 	CategoryID string
 	Tags       []string
-	Cursor     string // format: "timestamp,id" — used only with SortLatest
+	Cursor     string // "timestamp,id" for latest sort, opaque offset for ranked sorts
 	Limit      int
-	Offset     int    // used with comprehensive/downloads/views sort modes
+	Offset     int    // used with offset pagination
 	Sort       string // comprehensive, latest, downloads, views
 	MineOnly   bool   // if true, only return skills owned by UserID
+	UseCursor  bool   // if true, return cursor pagination
 }
 
 // SkillRow represents a row from the skills table.
@@ -93,15 +95,15 @@ func (r *Repo) List(ctx context.Context, f ListFilter) (*ListResult, error) {
 		args = append(args, f.UserID, f.SpaceID)
 	} else {
 		// Visibility filter:
-		// - public: visible to all members of the same space
+		// - public: visible regardless of the current space
 		// - space: visible to members of the same space
 		// - private: visible only to the owner within the same space
 		conditions = append(conditions, `(
-			(s.visibility = 'public' AND s.space_id = ?)
+			s.visibility = 'public'
 			OR (s.visibility = 'space' AND s.space_id = ?)
 			OR (s.visibility = 'private' AND s.owner_id = ? AND s.space_id = ?)
 		)`)
-		args = append(args, f.SpaceID, f.SpaceID, f.UserID, f.SpaceID)
+		args = append(args, f.SpaceID, f.UserID, f.SpaceID)
 	}
 
 	if f.CategoryID != "" {
@@ -112,10 +114,9 @@ func (r *Repo) List(ctx context.Context, f ListFilter) (*ListResult, error) {
 	if f.Query != "" {
 		searchTerm := "%" + escapeLike(f.Query) + "%"
 		conditions = append(conditions, `(
-			s.name LIKE ? OR s.description LIKE ? OR s.owner_name LIKE ? OR s.creator_name LIKE ?
-			OR JSON_SEARCH(s.tags, 'one', ?) IS NOT NULL
+			s.name LIKE ? OR s.display_name LIKE ?
 		)`)
-		args = append(args, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm)
+		args = append(args, searchTerm, searchTerm)
 	}
 
 	for _, tag := range f.Tags {
@@ -127,12 +128,16 @@ func (r *Repo) List(ctx context.Context, f ListFilter) (*ListResult, error) {
 		args = append(args, string(tagJSON))
 	}
 
-	// For "latest" sort mode, use cursor-based pagination
-	if sort == SortLatest && f.Cursor != "" {
-		cursorTime, cursorID, err := parseCursor(f.Cursor)
-		if err == nil {
-			conditions = append(conditions, "(s.created_at < ? OR (s.created_at = ? AND s.id < ?))")
-			args = append(args, cursorTime, cursorTime, cursorID)
+	useCursor := f.UseCursor
+	if useCursor && f.Cursor != "" {
+		if sort == SortLatest {
+			cursorTime, cursorID, err := parseCursor(f.Cursor)
+			if err == nil {
+				conditions = append(conditions, "(s.created_at < ? OR (s.created_at = ? AND s.id < ?))")
+				args = append(args, cursorTime, cursorTime, cursorID)
+			}
+		} else if offset := parseOffsetCursor(f.Cursor); offset > 0 {
+			f.Offset = offset
 		}
 	}
 
@@ -141,7 +146,6 @@ func (r *Repo) List(ctx context.Context, f ListFilter) (*ListResult, error) {
 		where = "WHERE " + strings.Join(conditions, " AND ")
 	}
 
-	// Build ORDER BY and pagination based on sort mode
 	var orderBy string
 	switch sort {
 	case SortLatest:
@@ -169,8 +173,7 @@ func (r *Repo) List(ctx context.Context, f ListFilter) (*ListResult, error) {
 	join := `LEFT JOIN skill_versions v ON v.id = s.current_version_id
 		LEFT JOIN resource_metrics rm ON rm.resource_type = 'skill' AND rm.resource_id = s.id`
 
-	if sort == SortLatest {
-		// Cursor-based pagination
+	if useCursor && sort == SortLatest {
 		query := fmt.Sprintf(`
 			SELECT %s
 			FROM skills s
@@ -184,13 +187,25 @@ func (r *Repo) List(ctx context.Context, f ListFilter) (*ListResult, error) {
 		return r.queryListResult(ctx, query, args, f.Limit, true)
 	}
 
-	// Offset-based pagination for comprehensive/downloads/views
 	offset := f.Offset
 	if offset < 0 {
 		offset = 0
 	}
 
-	// Count total
+	if useCursor {
+		query := fmt.Sprintf(`
+			SELECT %s
+			FROM skills s
+			%s
+			%s
+			%s
+			LIMIT ? OFFSET ?
+		`, selectCols, join, where, orderBy)
+		args = append(args, f.Limit+1, offset)
+
+		return r.queryOffsetCursorListResult(ctx, query, args, f.Limit, offset)
+	}
+
 	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM skills s %s %s`, join, where)
 	var total int
 	if err := r.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
@@ -247,6 +262,19 @@ func (r *Repo) queryListResult(ctx context.Context, query string, args []interfa
 	return result, nil
 }
 
+func (r *Repo) queryOffsetCursorListResult(ctx context.Context, query string, args []interface{}, limit, offset int) (*ListResult, error) {
+	result, err := r.queryListResult(ctx, query, args, limit, false)
+	if err != nil {
+		return nil, err
+	}
+	if len(result.Items) > limit {
+		result.Items = result.Items[:limit]
+		next := strconv.Itoa(offset + limit)
+		result.NextCursor = &next
+	}
+	return result, nil
+}
+
 func scanSkillRow(rows *sql.Rows, s *SkillRow) error {
 	cols, err := rows.Columns()
 	if err != nil {
@@ -291,6 +319,14 @@ func parseCursor(cursor string) (time.Time, string, error) {
 
 func buildCursor(t time.Time, id string) string {
 	return t.UTC().Format(time.RFC3339Nano) + "," + id
+}
+
+func parseOffsetCursor(cursor string) int {
+	offset, err := strconv.Atoi(cursor)
+	if err != nil || offset < 0 {
+		return 0
+	}
+	return offset
 }
 
 // escapeLike neutralizes MySQL LIKE wildcards in user keywords so search uses

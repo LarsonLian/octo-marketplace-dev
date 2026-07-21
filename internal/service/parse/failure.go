@@ -1,5 +1,7 @@
 package parse
 
+import "strings"
+
 func publicParseErrorMessage(errorCode string) string {
 	switch errorCode {
 	case "INTERNAL_ERROR":
@@ -16,11 +18,25 @@ func publicParseErrorMessage(errorCode string) string {
 		return "压缩包包含不安全的文件路径"
 	case "INVALID_SKILL_MD":
 		return "SKILL.md 内容不符合要求"
+	case "SKILL_NAME_MISMATCH":
+		return "重新上传的 Skill 与当前 Skill 不一致"
 	case "DUPLICATE_NAME":
 		return "当前 Space 下已存在同名 Skill"
 	case "PARSE_RETRY_EXHAUSTED":
 		return "解析任务多次超时，请重新上传"
+	case "PARSE_QUEUE_FULL":
+		return "解析队列繁忙，请稍后重试"
 	default:
 		return "解析失败"
 	}
+}
+
+func publicParseErrorMessageWithDetail(errorCode, detail string) string {
+	if errorCode == "SKILL_NAME_MISMATCH" {
+		detail = strings.TrimSpace(detail)
+		if detail != "" {
+			return detail
+		}
+	}
+	return publicParseErrorMessage(errorCode)
 }
