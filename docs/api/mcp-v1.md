@@ -110,6 +110,7 @@ Field names match the `octo-web` `dmworkmcp` package where the type overlaps;
   "tool_count": 8,
   "visibility": "public",
   "creator_name": "GitHub Bot",
+  "created_by_type": "human",
   "quick_start": {
     "transport": "streamable-http",
     "server_name": "GitHub MCP",
@@ -144,6 +145,17 @@ Field notes:
   records.
 - `creator_name`: snapshot of the owner's `Identity.name` at create time.
   Not updated when the underlying user renames themselves.
+- `created_by_type`: one of `human` / `bot` / `import`. Always present. `human`
+  is stamped for user-token creates and every legacy row (pre-#894). `bot` is
+  stamped when the create request was made with a Bot token — the middleware
+  collapses the Bot into its owner Identity for authorization, so `owner_uid` /
+  `creator_name` describe the owner user regardless. `import` is reserved for
+  the Git-import path (#867) and not written today. Frontends use this value
+  purely as a market badge — no permission behaviour derives from it.
+- `created_by_bot_uid` / `created_by_bot_name`: present only when
+  `created_by_type == "bot"`. `_uid` is the Bot's identity; `_name` is a
+  snapshot at create time so the market badge stays intact after the Bot is
+  renamed or deleted. Both fields are omitted from human-created rows.
 - `quick_start.server_name`: defaults to `name`; not a separate user input.
   See §3.3 for the full mapping. Used inside prompt-tab template copy
   (human-readable).
@@ -182,7 +194,10 @@ superset of the frontend TS type (§0):
   "tags": ["官方", "热门"],
   "tool_count": 8,
   "visibility": "public",
-  "creator_name": "GitHub Bot"
+  "creator_name": "GitHub Bot",
+  "created_by_type": "bot",
+  "created_by_bot_uid": "bot_01HZR…",
+  "created_by_bot_name": "GitHub Autoposter"
 }
 ```
 
@@ -210,6 +225,7 @@ between write and read shapes.
 
 Fields set by the server, never by the client:
 `mcp_id`, `owner_uid` (server-only, never surfaced), `creator_name`, `tool_count`,
+`created_by_type`, `created_by_bot_uid`, `created_by_bot_name`,
 `created_at`, `updated_at`, `quick_start.server_name`. Request bodies are
 strict: client-supplied server fields or any other unknown field are rejected
 with `VALIDATION_ERROR`.
@@ -285,8 +301,14 @@ Returns every record visible to the caller inside their current Space:
 
 | Name | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `keyword` | string | — | Case-insensitive substring match on `name` and `slogan`. |
-| `category` | string | `all` | Category key; `all` disables the filter. |
+| `keyword` | string | — | Case-insensitive substring match against `name`, `slogan`, `category`, `creator_name`, each entry of `tags`, `tools[].name`, `tools[].description`, and `usage_examples`. |
+| `category` | string (repeatable) | `all` | Category key; `all` disables the filter. Repeat or comma-separate (`?category=dev,search`) to OR-combine. |
+| `tag` | string (repeatable) | — | Tag filter; repeat or comma-separate to OR-combine. |
+| `transport` | string (repeatable) | — | Transport filter (`stdio` / `sse` / `streamable-http`); repeat or comma-separate to OR-combine. |
+| `visibility` | string (repeatable) | — | Visibility filter (`system` / `public` / `private`); repeat or comma-separate. Absent → no filter (still bounded by the visible-set rule above). |
+| `source` | string (repeatable) | — | Source facet (`system` / `space` / `mine`). Predicates partition the set the same way the response's `source` label does — a caller-owned row is labeled `mine`, not `space`. |
+| `created_by_type` | string (repeatable) | — | Provenance filter. Accepts `human` / `bot` / `import`. Repeat or comma-separate to OR-combine. Absent → no filter. |
+| `sort` | string | — | Ranking selector. `relevance` (only meaningful together with a non-empty `keyword`) orders by a fixed weighted match score against every searchable field; any other value falls back to the default order. |
 | `page` | int | `1` | One-based page number. |
 | `page_size` | int | `20` | Page size, max `100`. |
 
@@ -307,7 +329,9 @@ Returns every record visible to the caller inside their current Space:
   pagination.
 - Category filter options are supplied by the dedicated category API; MCP list
   responses do not embed category facets.
-- Order: newest first (`created_at DESC`). Not configurable in v1.
+- Default order: newest first (`created_at DESC`, tie-broken by `id DESC`).
+  Pass `sort=relevance` together with a non-empty `keyword` to switch to the
+  weighted match score; any other `sort` value falls back to the default.
 
 **Errors:** 401 / 403.
 
@@ -317,8 +341,9 @@ Returns every record owned by the caller in their current Space,
 regardless of visibility (including their own `private`). Never leaks
 anything owned by another user.
 
-**Query parameters:** same `keyword`, `category`, `page`, `page_size` as
-`GET /mcps`.
+**Query parameters:** same as `GET /mcps` (`keyword`, `category`, `tag`,
+`transport`, `visibility`, `source`, `created_by_type`, `sort`, `page`,
+`page_size`).
 
 **Response (200):** same envelope as `GET /mcps`, with `data` and
 `pagination.total` restricted to `owner_uid == caller`.

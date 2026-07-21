@@ -46,12 +46,20 @@ func New(db *sql.DB) *Repository {
 // ListFilter carries the resolved visibility scope plus the query params. The
 // service builds it; the repository only translates it to SQL.
 type ListFilter struct {
-	CallerUID string
-	SpaceID   string
-	Keyword   string
-	Category  string // "" or CategoryKeyAll disables the category predicate
-	Limit     int
-	Offset    int
+	CallerUID    string
+	SpaceID      string
+	Keyword      string
+	Categories   []string
+	Tags         []string
+	Transports   []string
+	Visibilities []string
+	Sources      []string
+	// CreatedByTypes narrows the result to rows whose created_by_type matches
+	// one of the given values (mcp-v1.md §4.2). Nil/empty means no filter.
+	CreatedByTypes []string
+	Sort           string
+	Limit          int
+	Offset         int
 	// MineOnly restricts the result to rows owned by CallerUID inside SpaceID
 	// (GET /mcps/mine, doc §4.3). When false, the visible-set rule applies
 	// (GET /mcps, doc §4.2).
@@ -202,8 +210,13 @@ func (r *Repository) List(ctx context.Context, f ListFilter) ([]model.MCP, int, 
 
 	pageWhere := where
 	pageArgs := append([]any{}, args...)
+	orderBy := "created_at DESC, id DESC"
+	if f.Sort == "relevance" && strings.TrimSpace(f.Keyword) != "" {
+		orderBy, args = relevanceOrder(f.Keyword)
+		pageArgs = append(pageArgs, args...)
+	}
 	q := `SELECT ` + columns + ` FROM mcp_servers WHERE ` + pageWhere +
-		` ORDER BY created_at DESC LIMIT ? OFFSET ?`
+		` ORDER BY ` + orderBy + ` LIMIT ? OFFSET ?`
 	pageArgs = append(pageArgs, f.Limit, f.Offset)
 
 	rows, err := r.db.QueryContext(ctx, q, pageArgs...)
@@ -224,6 +237,23 @@ func (r *Repository) List(ctx context.Context, f ListFilter) ([]model.MCP, int, 
 		return nil, 0, nil, err
 	}
 	return items, total, cats, nil
+}
+
+// relevanceOrder is the single ranking contract mirrored by service.enrichListItem.
+// Every searchable field participates with the same weight and stable tie-breakers.
+// JSON columns are matched case-insensitively via LOWER(CAST(...)) LIKE with a
+// lowercased keyword so the SQL ranking agrees with the Go-side substring check
+// (which lowercases both sides). The tools OR-group is wrapped in COALESCE so
+// JSON_EXTRACT returning NULL on an empty tools_json (`'[]'` → SQL NULL) does
+// not collapse the whole additive score to NULL and bury exact-name matches.
+func relevanceOrder(keyword string) (string, []any) {
+	like := "%" + escapeLike(strings.ToLower(strings.TrimSpace(keyword))) + "%"
+	order := `((name LIKE ?) * 8 + (slogan LIKE ?) * 2 + (category LIKE ?) * 3 + ` +
+		`(LOWER(CAST(tags_json AS CHAR)) LIKE ?) * 6 + ` +
+		`COALESCE(LOWER(CAST(JSON_EXTRACT(tools_json, '$[*].name') AS CHAR)) LIKE ? OR ` +
+		`LOWER(CAST(JSON_EXTRACT(tools_json, '$[*].description') AS CHAR)) LIKE ?, 0) * 7 + ` +
+		`(LOWER(CAST(usage_examples_json AS CHAR)) LIKE ?) + (creator_name LIKE ?)) DESC, updated_at DESC, id DESC`
+	return order, []any{like, like, like, like, like, like, like, like}
 }
 
 func (r *Repository) count(ctx context.Context, where string, args []any) (int, error) {
@@ -285,14 +315,55 @@ func (f ListFilter) buildWhere() (string, []any) {
 	clauses = append(clauses, "deleted_at IS NULL")
 
 	if kw := strings.TrimSpace(f.Keyword); kw != "" {
-		clauses = append(clauses, "(name LIKE ? OR slogan LIKE ?)")
-		like := "%" + escapeLike(kw) + "%"
-		args = append(args, like, like)
+		clauses = append(clauses, `(name LIKE ? OR slogan LIKE ? OR category LIKE ? OR `+
+			`LOWER(CAST(tags_json AS CHAR)) LIKE ? OR `+
+			`LOWER(CAST(JSON_EXTRACT(tools_json, '$[*].name') AS CHAR)) LIKE ? OR `+
+			`LOWER(CAST(JSON_EXTRACT(tools_json, '$[*].description') AS CHAR)) LIKE ? OR `+
+			`LOWER(CAST(usage_examples_json AS CHAR)) LIKE ? OR creator_name LIKE ?)`)
+		like := "%" + escapeLike(strings.ToLower(kw)) + "%"
+		args = append(args, like, like, like, like, like, like, like, like)
 	}
 
-	if cat := strings.TrimSpace(f.Category); cat != "" && cat != model.CategoryKeyAll {
-		clauses = append(clauses, "category = ?")
-		args = append(args, cat)
+	appendIn := func(column string, values []string) {
+		if len(values) == 0 {
+			return
+		}
+		marks := make([]string, len(values))
+		for i, value := range values {
+			marks[i] = "?"
+			args = append(args, value)
+		}
+		clauses = append(clauses, column+" IN ("+strings.Join(marks, ",")+")")
+	}
+	appendIn("category", f.Categories)
+	appendIn("transport", f.Transports)
+	appendIn("visibility", f.Visibilities)
+	appendIn("created_by_type", f.CreatedByTypes)
+	if len(f.Sources) > 0 {
+		parts := make([]string, 0, len(f.Sources))
+		for _, source := range f.Sources {
+			switch source {
+			case "system":
+				parts = append(parts, "visibility = 'system'")
+			case "mine":
+				parts = append(parts, "owner_uid = ? AND visibility <> 'system'")
+				args = append(args, f.CallerUID)
+			case "space":
+				parts = append(parts, "visibility <> 'system' AND space_id = ? AND owner_uid <> ?")
+				args = append(args, f.SpaceID, f.CallerUID)
+			}
+		}
+		if len(parts) > 0 {
+			clauses = append(clauses, "("+strings.Join(parts, " OR ")+")")
+		}
+	}
+	if len(f.Tags) > 0 {
+		parts := make([]string, 0, len(f.Tags))
+		for _, tag := range f.Tags {
+			parts = append(parts, "JSON_CONTAINS(tags_json, JSON_QUOTE(?))")
+			args = append(args, tag)
+		}
+		clauses = append(clauses, "("+strings.Join(parts, " OR ")+")")
 	}
 
 	return strings.Join(clauses, " AND "), args
@@ -321,12 +392,15 @@ func insert(ctx context.Context, ex execer, m *model.MCP) error {
 	const q = `INSERT INTO mcp_servers
 	  (id, name, slug, slogan, category, icon, icon_version, tags_json, tools_json, usage_examples_json,
 	   faqs_json, notes_json, visibility, owner_uid, space_id, creator_name,
+	   created_by_type, created_by_bot_uid, created_by_bot_name,
 	   transport, config_json, created_at, updated_at, deleted_at)
-	  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`
+	  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`
 	_, err = ex.ExecContext(ctx, q,
 		m.ID, m.Name, m.Slug, m.Slogan, m.Category, m.Icon, m.IconVersion,
 		cols.tags, cols.tools, cols.usage, cols.faqs, cols.notes,
-		string(m.Visibility), m.OwnerUID, nullableSpace(m.SpaceID), m.CreatorName,
+		string(m.Visibility), m.OwnerUID, nullableString(m.SpaceID), m.CreatorName,
+		string(m.CreatedByType),
+		nullableString(m.CreatedByBotUID), nullableString(m.CreatedByBotName),
 		string(m.Transport), cols.config, m.CreatedAt, m.UpdatedAt,
 	)
 	return err
@@ -361,17 +435,21 @@ func update(ctx context.Context, ex execer, m *model.MCP) error {
 	return nil
 }
 
-// nullableSpace maps the empty-string convention (system rows) onto SQL NULL.
-func nullableSpace(spaceID string) any {
-	if spaceID == "" {
+// nullableString maps the empty-string convention onto SQL NULL. Used for
+// every optional VARCHAR column where "" is the caller's way of saying "not
+// applicable": space_id on system rows (which are cross-Space), and the
+// bot provenance triple's uid/name on human-created rows.
+func nullableString(s string) any {
+	if s == "" {
 		return nil
 	}
-	return spaceID
+	return s
 }
 
 const columns = `id, name, slug, slogan, category, icon, icon_version, tags_json, tools_json,
 	usage_examples_json, faqs_json, notes_json, visibility, owner_uid, space_id,
-	creator_name, transport, config_json, created_at, updated_at, deleted_at`
+	creator_name, created_by_type, created_by_bot_uid, created_by_bot_name,
+	transport, config_json, created_at, updated_at, deleted_at`
 
 type marshaledColumns struct {
 	tags   []byte
@@ -417,22 +495,26 @@ type rowScanner interface {
 
 func scanRow(s rowScanner) (*model.MCP, error) {
 	var (
-		m          model.MCP
-		tags       []byte
-		tools      []byte
-		usage      []byte
-		faqs       []byte
-		notes      []byte
-		config     []byte
-		spaceID    sql.NullString
-		visibility string
-		transport  string
-		deletedAt  sql.NullTime
+		m                model.MCP
+		tags             []byte
+		tools            []byte
+		usage            []byte
+		faqs             []byte
+		notes            []byte
+		config           []byte
+		spaceID          sql.NullString
+		visibility       string
+		createdByType    string
+		createdByBotUID  sql.NullString
+		createdByBotName sql.NullString
+		transport        string
+		deletedAt        sql.NullTime
 	)
 	if err := s.Scan(
 		&m.ID, &m.Name, &m.Slug, &m.Slogan, &m.Category, &m.Icon, &m.IconVersion,
 		&tags, &tools, &usage, &faqs, &notes,
 		&visibility, &m.OwnerUID, &spaceID, &m.CreatorName,
+		&createdByType, &createdByBotUID, &createdByBotName,
 		&transport, &config, &m.CreatedAt, &m.UpdatedAt, &deletedAt,
 	); err != nil {
 		return nil, err
@@ -440,6 +522,13 @@ func scanRow(s rowScanner) (*model.MCP, error) {
 
 	m.Visibility = model.Visibility(visibility)
 	m.Transport = model.Transport(transport)
+	m.CreatedByType = model.CreatedByType(createdByType)
+	if createdByBotUID.Valid {
+		m.CreatedByBotUID = createdByBotUID.String
+	}
+	if createdByBotName.Valid {
+		m.CreatedByBotName = createdByBotName.String
+	}
 	if spaceID.Valid {
 		m.SpaceID = spaceID.String
 	}

@@ -69,6 +69,9 @@ func (h *AdminMCP) Create(c *gin.Context) {
 // @Security Bearer
 // @Param keyword query string false "Search keyword"
 // @Param category query string false "Category key"
+// @Param transport query []string false "Transport filters"
+// @Param tag query []string false "Tag filters"
+// @Param sort query string false "Sort: relevance, updated"
 // @Param page query int false "Page number, default 1"
 // @Param page_size query int false "Page size, default 20, max 100"
 // @Success 200 {object} apiresponse.OffsetList[model.ListItem]

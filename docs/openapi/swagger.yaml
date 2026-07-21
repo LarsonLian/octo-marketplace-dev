@@ -204,12 +204,31 @@ components:
         visibility:
           $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_model.Visibility'
       type: object
+    github_com_Mininglamp-OSS_octo-marketplace_internal_model.CreatedByType:
+      description: Same shape + semantics as Detail (see there for rationale).
+      enum:
+      - human
+      - bot
+      - import
+      type: string
+      x-enum-comments:
+        CreatedByImport: reserved for Git import (#867); not written today.
+      x-enum-varnames:
+      - CreatedByHuman
+      - CreatedByBot
+      - CreatedByImport
     github_com_Mininglamp-OSS_octo-marketplace_internal_model.Detail:
       properties:
         category:
           type: string
         created_at:
           type: string
+        created_by_bot_name:
+          type: string
+        created_by_bot_uid:
+          type: string
+        created_by_type:
+          $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_model.CreatedByType'
         creator_name:
           type: string
         faqs:
@@ -265,15 +284,30 @@ components:
       properties:
         category:
           type: string
+        created_by_bot_name:
+          type: string
+        created_by_bot_uid:
+          type: string
+        created_by_type:
+          $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_model.CreatedByType'
         creator_name:
           type: string
         icon:
           type: string
+        match_reasons:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
         mcp_id:
           type: string
         name:
           type: string
+        relevance:
+          type: integer
         slogan:
+          type: string
+        source:
           type: string
         tags:
           items:
@@ -282,6 +316,10 @@ components:
           uniqueItems: false
         tool_count:
           type: integer
+        transport:
+          $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_model.Transport'
+        updated_at:
+          type: string
         visibility:
           $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_model.Visibility'
       type: object
@@ -785,6 +823,25 @@ paths:
       - description: Category key
         in: query
         name: category
+        schema:
+          type: string
+      - description: Transport filters
+        in: query
+        name: transport
+        schema:
+          items:
+            type: string
+          type: array
+      - description: Tag filters
+        in: query
+        name: tag
+        schema:
+          items:
+            type: string
+          type: array
+      - description: 'Sort: relevance, updated'
+        in: query
+        name: sort
         schema:
           type: string
       - description: Page number, default 1
@@ -1316,6 +1373,19 @@ paths:
       description: Return MCP category keys and visible record counts for the current
         Space.
       operationId: mcp_category.list
+      parameters:
+      - description: 'Scope: \'
+        in: query
+        name: mode
+        schema:
+          type: string
+      - description: Provenance filter (human, bot, import); repeatable or comma-separated
+        in: query
+        name: created_by_type
+        schema:
+          items:
+            type: string
+          type: array
       requestBody:
         content:
           application/json:
@@ -1434,6 +1504,46 @@ paths:
       - description: Category key
         in: query
         name: category
+        schema:
+          type: string
+      - description: Transport filters
+        in: query
+        name: transport
+        schema:
+          items:
+            type: string
+          type: array
+      - description: Visibility filters
+        in: query
+        name: visibility
+        schema:
+          items:
+            type: string
+          type: array
+      - description: 'Source filters: system, space, mine'
+        in: query
+        name: source
+        schema:
+          items:
+            type: string
+          type: array
+      - description: Provenance filter (human, bot, import); repeatable or comma-separated
+        in: query
+        name: created_by_type
+        schema:
+          items:
+            type: string
+          type: array
+      - description: Tag filters
+        in: query
+        name: tag
+        schema:
+          items:
+            type: string
+          type: array
+      - description: 'Sort: relevance, updated'
+        in: query
+        name: sort
         schema:
           type: string
       - description: Page number, default 1
@@ -1867,6 +1977,46 @@ paths:
       - description: Category key
         in: query
         name: category
+        schema:
+          type: string
+      - description: Transport filters
+        in: query
+        name: transport
+        schema:
+          items:
+            type: string
+          type: array
+      - description: Visibility filters
+        in: query
+        name: visibility
+        schema:
+          items:
+            type: string
+          type: array
+      - description: 'Source filters: system, space, mine'
+        in: query
+        name: source
+        schema:
+          items:
+            type: string
+          type: array
+      - description: Provenance filter (human, bot, import); repeatable or comma-separated
+        in: query
+        name: created_by_type
+        schema:
+          items:
+            type: string
+          type: array
+      - description: Tag filters
+        in: query
+        name: tag
+        schema:
+          items:
+            type: string
+          type: array
+      - description: 'Sort: relevance, updated'
+        in: query
+        name: sort
         schema:
           type: string
       - description: Page number, default 1

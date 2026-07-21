@@ -85,6 +85,12 @@ func (h *MCP) Create(c *gin.Context) {
 // @Security Bearer
 // @Param keyword query string false "Search keyword"
 // @Param category query string false "Category key"
+// @Param transport query []string false "Transport filters"
+// @Param visibility query []string false "Visibility filters"
+// @Param source query []string false "Source filters: system, space, mine"
+// @Param created_by_type query []string false "Provenance filter (human, bot, import); repeatable or comma-separated"
+// @Param tag query []string false "Tag filters"
+// @Param sort query string false "Sort: relevance, updated"
 // @Param page query int false "Page number, default 1"
 // @Param page_size query int false "Page size, default 20, max 100"
 // @Success 200 {object} apiresponse.OffsetList[model.ListItem]
@@ -105,6 +111,12 @@ func (h *MCP) List(c *gin.Context) { h.list(c, false) }
 // @Security Bearer
 // @Param keyword query string false "Search keyword"
 // @Param category query string false "Category key"
+// @Param transport query []string false "Transport filters"
+// @Param visibility query []string false "Visibility filters"
+// @Param source query []string false "Source filters: system, space, mine"
+// @Param created_by_type query []string false "Provenance filter (human, bot, import); repeatable or comma-separated"
+// @Param tag query []string false "Tag filters"
+// @Param sort query string false "Sort: relevance, updated"
 // @Param page query int false "Page number, default 1"
 // @Param page_size query int false "Page size, default 20, max 100"
 // @Success 200 {object} apiresponse.OffsetList[model.ListItem]
@@ -123,6 +135,8 @@ func (h *MCP) ListMine(c *gin.Context) { h.list(c, true) }
 // @Accept json
 // @Produce json
 // @Security Bearer
+// @Param mode query string false "Scope: \"mine\" restricts counts to caller-owned records"
+// @Param created_by_type query []string false "Provenance filter (human, bot, import); repeatable or comma-separated"
 // @Success 200 {object} apiresponse.Data[[]model.CategoryFilter]
 // @Failure 401 {object} apiresponse.Error "AUTH_REQUIRED"
 // @Failure 403 {object} apiresponse.Error "FORBIDDEN"
@@ -135,7 +149,22 @@ func (h *MCP) ListCategories(c *gin.Context) {
 		writeError(c, apierr.Unauthorized())
 		return
 	}
-	result, apiErr := h.svc.List(c.Request.Context(), caller, service.ListParams{})
+	// Categories share the SAME predicates as the list endpoints so counts
+	// stay coherent when the two filters combine (issue #894 follow-up: a
+	// user narrowing to "Bot 创建" expects every category pill to shrink
+	// accordingly). Only `created_by_type` is honoured today — the other
+	// filters (keyword/tags/…) are still ignored by design because clicking
+	// a pill would zero itself out otherwise.
+	params := service.ListParams{
+		CreatedByTypes: splitQuery(c.QueryArray("created_by_type")),
+	}
+	var result model.ListResponse
+	var apiErr *apierr.Error
+	if c.Query("mode") == "mine" {
+		result, apiErr = h.svc.ListMine(c.Request.Context(), caller, params)
+	} else {
+		result, apiErr = h.svc.List(c.Request.Context(), caller, params)
+	}
 	if apiErr != nil {
 		writeError(c, apiErr)
 		return
@@ -345,7 +374,18 @@ func callerFromContext(c *gin.Context) (service.Caller, bool) {
 	if !ok || identity.UID == "" {
 		return service.Caller{}, false
 	}
-	return service.Caller{UID: identity.UID, Name: identity.Name, SpaceID: marketmiddleware.SpaceID(c)}, true
+	caller := service.Caller{UID: identity.UID, Name: identity.Name, SpaceID: marketmiddleware.SpaceID(c)}
+	// If the token was a Bot token, middleware.authenticateBot collapsed the
+	// Bot into the owner Identity for authorization but stashed the resolved
+	// BotIdentity in the context. Lift it here so the service layer can stamp
+	// CreatedByType=bot on new rows (issue #894). A user-token request has no
+	// BotIdentity — the two Bot fields stay empty and CreatedByType defaults
+	// to human downstream.
+	if bot, hasBot := marketmiddleware.BotIdentity(c); hasBot && bot.BotUID != "" {
+		caller.BotUID = bot.BotUID
+		caller.BotName = bot.BotName
+	}
+	return caller, true
 }
 
 func listParams(c *gin.Context) (service.ListParams, int, int) {
@@ -354,12 +394,31 @@ func listParams(c *gin.Context) (service.ListParams, int, int) {
 	if pageSize > 100 {
 		pageSize = 100
 	}
+	categories := splitQuery(c.QueryArray("category"))
 	return service.ListParams{
-		Keyword:  strings.TrimSpace(c.Query("keyword")),
-		Category: strings.TrimSpace(c.Query("category")),
-		Limit:    pageSize,
-		Offset:   (page - 1) * pageSize,
+		Keyword:        strings.TrimSpace(c.Query("keyword")),
+		Categories:     categories,
+		Tags:           splitQuery(c.QueryArray("tag")),
+		Transports:     splitQuery(c.QueryArray("transport")),
+		Visibilities:   splitQuery(c.QueryArray("visibility")),
+		Sources:        splitQuery(c.QueryArray("source")),
+		CreatedByTypes: splitQuery(c.QueryArray("created_by_type")),
+		Sort:           strings.TrimSpace(c.Query("sort")),
+		Limit:          pageSize,
+		Offset:         (page - 1) * pageSize,
 	}, page, pageSize
+}
+
+func splitQuery(values []string) []string {
+	var result []string
+	for _, value := range values {
+		for _, item := range strings.Split(value, ",") {
+			if item = strings.TrimSpace(item); item != "" && item != model.CategoryKeyAll {
+				result = append(result, item)
+			}
+		}
+	}
+	return result
 }
 
 func positiveInt(value string, fallback int) int {
