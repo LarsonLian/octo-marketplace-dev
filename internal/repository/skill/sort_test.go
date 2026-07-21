@@ -63,7 +63,7 @@ func TestListSortComprehensive(t *testing.T) {
 	}
 }
 
-func TestListSortLatestUsesCursor(t *testing.T) {
+func TestListSortLatestUsesOffset(t *testing.T) {
 	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
 	if err != nil {
 		t.Fatal(err)
@@ -72,9 +72,12 @@ func TestListSortLatestUsesCursor(t *testing.T) {
 
 	now := time.Now().UTC()
 
-	// latest sort → cursor-based pagination (no COUNT query)
+	// public latest sort → offset pagination to keep /skills on one response envelope.
+	mock.ExpectQuery("SELECT COUNT").
+		WithArgs("space-1", "user-1", "space-1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	mock.ExpectQuery("ORDER BY s\\.created_at DESC, s\\.id DESC").
-		WithArgs("space-1", "user-1", "space-1", 21). // limit+1
+		WithArgs("space-1", "user-1", "space-1", 20, 0).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "name", "display_name", "icon_url", "source_skill_id", "current_version_id",
 			"description", "category_id", "tags",
@@ -98,7 +101,10 @@ func TestListSortLatestUsesCursor(t *testing.T) {
 		t.Fatal(err)
 	}
 	if result.NextCursor != nil {
-		t.Errorf("NextCursor should be nil when fewer results than limit+1")
+		t.Errorf("NextCursor should be nil for offset pagination")
+	}
+	if result.Total != 1 {
+		t.Errorf("Total = %d, want 1", result.Total)
 	}
 	if len(result.Items) != 1 {
 		t.Fatalf("Items count = %d, want 1", len(result.Items))

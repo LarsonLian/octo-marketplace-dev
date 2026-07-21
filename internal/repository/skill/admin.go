@@ -143,7 +143,7 @@ func (r *Repo) AdminConsumeParseTask(ctx context.Context, id string) error {
 // AdminUpdateSkillAndConsumeTask updates a skill, inserts a new version record,
 // and marks the parse task as consumed within a single transaction without
 // owner/space checks on the parse task (admin-only).
-func (r *Repo) AdminUpdateSkillAndConsumeTask(ctx context.Context, skillID, ownerID string, p UpdateParams, parseTaskID string, ver *model.SkillVersion) error {
+func (r *Repo) AdminUpdateSkillAndConsumeTask(ctx context.Context, skillID, ownerID string, p UpdateParams, parseTaskID, taskSkillID string, ver *model.SkillVersion) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -152,8 +152,9 @@ func (r *Repo) AdminUpdateSkillAndConsumeTask(ctx context.Context, skillID, owne
 
 	// Consume parse task first (acts as a lock, no owner/space check)
 	res, err := tx.ExecContext(ctx,
-		"UPDATE parse_tasks SET status = 'consumed' WHERE id = ? AND status = 'success'",
-		parseTaskID)
+		`UPDATE parse_tasks SET status = 'consumed'
+		 WHERE id = ? AND status = 'success' AND (skill_id = ? OR skill_id = '' OR skill_id IS NULL)`,
+		parseTaskID, taskSkillID)
 	if err != nil {
 		return err
 	}

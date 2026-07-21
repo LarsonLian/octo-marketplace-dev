@@ -24,11 +24,12 @@ type ListFilter struct {
 	Query      string
 	CategoryID string
 	Tags       []string
-	Cursor     string // format: "timestamp,id" — used only with SortLatest
+	Cursor     string // format: "timestamp,id" — used only with UseCursor
 	Limit      int
-	Offset     int    // used with comprehensive/downloads/views sort modes
+	Offset     int    // used with offset pagination
 	Sort       string // comprehensive, latest, downloads, views
 	MineOnly   bool   // if true, only return skills owned by UserID
+	UseCursor  bool   // if true, use cursor pagination for latest sort
 }
 
 // SkillRow represents a row from the skills table.
@@ -124,8 +125,11 @@ func (r *Repo) List(ctx context.Context, f ListFilter) (*ListResult, error) {
 		args = append(args, string(tagJSON))
 	}
 
-	// For "latest" sort mode, use cursor-based pagination
-	if sort == SortLatest && f.Cursor != "" {
+	// Cursor pagination is reserved for endpoints that explicitly opt into it
+	// (currently /skills/mine). Public /skills uses one offset envelope for all
+	// sort modes so its OpenAPI contract stays stable.
+	useCursor := sort == SortLatest && f.UseCursor
+	if useCursor && f.Cursor != "" {
 		cursorTime, cursorID, err := parseCursor(f.Cursor)
 		if err == nil {
 			conditions = append(conditions, "(s.created_at < ? OR (s.created_at = ? AND s.id < ?))")
@@ -166,7 +170,7 @@ func (r *Repo) List(ctx context.Context, f ListFilter) (*ListResult, error) {
 	join := `LEFT JOIN skill_versions v ON v.id = s.current_version_id
 		LEFT JOIN resource_metrics rm ON rm.resource_type = 'skill' AND rm.resource_id = s.id`
 
-	if sort == SortLatest {
+	if useCursor {
 		// Cursor-based pagination
 		query := fmt.Sprintf(`
 			SELECT %s

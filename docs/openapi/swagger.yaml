@@ -160,6 +160,16 @@ components:
         pagination:
           $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.OffsetPagination'
       type: object
+    github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.OffsetList-internal_api_handler_skill_SkillResponse:
+      properties:
+        data:
+          items:
+            $ref: '#/components/schemas/internal_api_handler_skill.SkillResponse'
+          type: array
+          uniqueItems: false
+        pagination:
+          $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.OffsetPagination'
+      type: object
     github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.OffsetPagination:
       properties:
         page:
@@ -3145,7 +3155,7 @@ paths:
       - skill_upload
   /skills:
     get:
-      description: List skills visible in the current Space with sort and pagination.
+      description: List skills visible in the current Space with offset pagination.
       operationId: skill.list
       parameters:
       - description: Search query
@@ -3175,14 +3185,9 @@ paths:
         name: sort
         schema:
           type: string
-      - description: Cursor for next page (latest sort only)
+      - description: Page number, default 1
         in: query
-        name: cursor
-        schema:
-          type: string
-      - description: Offset for pagination (comprehensive/downloads/views)
-        in: query
-        name: offset
+        name: page
         schema:
           type: integer
       - description: Page size, default 20, max 50
@@ -3200,7 +3205,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.CursorList-internal_api_handler_skill_SkillResponse'
+                $ref: '#/components/schemas/github_com_Mininglamp-OSS_octo-marketplace_internal_api_response.OffsetList-internal_api_handler_skill_SkillResponse'
           description: OK
         "400":
           content:
